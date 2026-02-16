@@ -40,8 +40,10 @@ HisstoryAudioProcessor::createParameterLayout()
         juce::ParameterID { "bypass",   1 }, "Bypass",         false));
 
     // ── 6-band threshold offsets  ────────────────────────────────────────────
-    //  Defaults focus on the 4 kHz–12 kHz hiss range.
-    constexpr float defaultOffsets[numBands] = { 0.0f, 0.0f, 5.0f, 10.0f, 12.0f, 10.0f };
+    //  Defaults start at minimum (no removal).  In adaptive mode, the
+    //  adaptiveBandBoost constant shifts these to effective 0 → 10 dB.
+    //  In non-adaptive mode, all points start at the bottom of the display.
+    constexpr float defaultOffsets[numBands] = { -20.0f, -20.0f, -15.0f, -10.0f, -8.0f, -10.0f };
 
     for (int i = 0; i < numBands; ++i)
     {
@@ -104,10 +106,9 @@ void HisstoryAudioProcessor::generateDefaultNoiseProfile()
         float freq = static_cast<float> (bin) * sr / static_cast<float> (fftSize);
 
         // Model hiss as a gentle upward slope above 1 kHz (~3 dB/octave).
-        // Start HIGH so the adaptive min-follower always converges DOWNWARD
-        // (fast attack) to the actual noise floor within the first second.
-        // Starting low would force the slow release branch and take minutes.
-        float baseMag = 10.0f;
+        // Use a low base magnitude so the threshold curve starts near the
+        // bottom of the display in non-adaptive mode (user drags up to gate).
+        float baseMag = 0.5f;
 
         if (freq > 1000.0f)
         {
@@ -116,7 +117,6 @@ void HisstoryAudioProcessor::generateDefaultNoiseProfile()
         }
         else
         {
-            // Roll off gently below 1 kHz so bass is left untouched.
             float rolloff = freq / 1000.0f;
             baseMag *= std::max (rolloff, 0.1f);
         }
@@ -124,9 +124,27 @@ void HisstoryAudioProcessor::generateDefaultNoiseProfile()
         noiseProfile[bin] = baseMag;
     }
 
-    // Copy for GUI display.
     std::copy (noiseProfile.begin(), noiseProfile.end(), noiseProfileDisplay);
     noiseProfileReady.store (true);
+}
+
+//==============================================================================
+//  Reset adaptive profile – start from near-zero (no removal)
+//==============================================================================
+void HisstoryAudioProcessor::resetAdaptiveProfile()
+{
+    for (int bin = 0; bin < numBins; ++bin)
+        noiseProfile[bin] = 1e-7f;
+
+    std::copy (noiseProfile.begin(), noiseProfile.end(), noiseProfileDisplay);
+    noiseProfileReady.store (true);
+
+    runningMean.fill (0.0f);
+    runningMeanSq.fill (0.0f);
+    smoothedNoisePurity = 0.5f;
+
+    for (auto& ch : channels)
+        ch.prevGain.fill (1.0f);
 }
 
 //==============================================================================
@@ -142,6 +160,10 @@ void HisstoryAudioProcessor::prepareToPlay (double sampleRate, int /*samplesPerB
 
     std::memset (inputSpectrumDB,  0, sizeof (inputSpectrumDB));
     std::memset (outputSpectrumDB, 0, sizeof (outputSpectrumDB));
+
+    runningMean.fill (0.0f);
+    runningMeanSq.fill (0.0f);
+    smoothedNoisePurity = 0.5f;
 
     // ── Measure the actual FFT round-trip scaling on this platform ───────────
     //  JUCE's inverse FFT may or may not apply 1/N normalisation depending on
@@ -168,6 +190,15 @@ void HisstoryAudioProcessor::prepareToPlay (double sampleRate, int /*samplesPerB
 
     // Start with a synthetic hiss-shaped profile.
     generateDefaultNoiseProfile();
+
+    // If adaptive mode is active, start from near-zero so the plugin
+    // begins without removing any sound, then converges upward.
+    lastAdaptiveState = pAdaptive->load() > 0.5f;
+    if (lastAdaptiveState)
+        resetAdaptiveProfile();
+
+    silenceSampleCount = 0;
+    wasInSilence = false;
 
     updatePerBinThreshold();
 }
@@ -237,13 +268,21 @@ float HisstoryAudioProcessor::interpolateBandOffset (float freqHz) const
 
 void HisstoryAudioProcessor::updatePerBinThreshold()
 {
-    const float sr = currentSampleRate.load();
+    const float sr          = currentSampleRate.load();
     const float globalThrDB = pThreshold->load();
+    const bool  isAdaptive  = pAdaptive->load() > 0.5f;
 
     for (int bin = 0; bin < numBins; ++bin)
     {
         float freq    = static_cast<float> (bin) * sr / static_cast<float> (fftSize);
         float bandOff = interpolateBandOffset (freq);
+
+        // In adaptive mode, shift band offsets upward so the default
+        // low values still provide effective gating once the profile
+        // has converged.
+        if (isAdaptive)
+            bandOff += adaptiveBandBoost;
+
         float totalDB = globalThrDB + bandOff;
         perBinThreshold[bin] = juce::Decibels::decibelsToGain (totalDB);
     }
@@ -259,6 +298,21 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     if (pBypass->load() > 0.5f)
         return;
+
+    const bool currentAdaptive = pAdaptive->load() > 0.5f;
+
+    // ── Detect adaptive mode transitions ─────────────────────────────────────
+    if (currentAdaptive && ! lastAdaptiveState)
+    {
+        // Switched to adaptive: start profile from zero (no removal)
+        resetAdaptiveProfile();
+    }
+    else if (! currentAdaptive && lastAdaptiveState)
+    {
+        // Switched to non-adaptive: reset to synthetic hiss profile
+        generateDefaultNoiseProfile();
+    }
+    lastAdaptiveState = currentAdaptive;
 
     updatePerBinThreshold();
 
@@ -295,10 +349,6 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             }
 
             // ── Hard safety: catch catastrophic gain only ─────────────────
-            //  With correct normalisation + spectral gains ≤ 1.0 this
-            //  should never trigger.  The 4× margin avoids interfering
-            //  with normal spectral-gating, while still protecting
-            //  against gross FFT-scaling errors on exotic backends.
             const float absOut = std::abs (output);
             const float absIn  = std::abs (delayedInput);
 
@@ -311,6 +361,38 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             }
 
             data[i] = output;
+        }
+    }
+
+    // ── New-track detection via silence gap ───────────────────────────────────
+    //  When a silence gap (> 0.5 s below −60 dBFS) ends and adaptive mode is
+    //  active, reset the noise profile so the plugin re-adapts to the new track.
+    if (currentAdaptive)
+    {
+        float blockSumSq = 0.0f;
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            const auto* rd = buffer.getReadPointer (ch);
+            for (int i = 0; i < numSamples; ++i)
+                blockSumSq += rd[i] * rd[i];
+        }
+        const float blockRMS = std::sqrt (blockSumSq / static_cast<float> (numCh * numSamples));
+        const float blockDB  = 20.0f * std::log10 (blockRMS + 1e-20f);
+
+        if (blockDB < -60.0f)
+        {
+            silenceSampleCount += numSamples;
+            const float sr = currentSampleRate.load();
+            if (static_cast<float> (silenceSampleCount) / sr > 0.5f)
+                wasInSilence = true;
+        }
+        else
+        {
+            if (wasInSilence)
+                resetAdaptiveProfile();
+
+            wasInSilence       = false;
+            silenceSampleCount = 0;
         }
     }
 }
@@ -354,22 +436,24 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
     const float smoothPct     = pSmoothing->load() / 100.0f;
     const bool  isAdaptive    = pAdaptive->load() > 0.5f;
 
-    const float spectralFloor = juce::Decibels::decibelsToGain (-80.0f);
+    // Spectral floor: max attenuation applied per bin.
+    // -60 dB preserves a tiny residual, avoiding complete "holes" in the
+    // audio that sound unnatural and cause music loss.
+    const float spectralFloor = juce::Decibels::decibelsToGain (-60.0f);
 
-    // Oversubtraction factor: higher = more aggressive noise removal.
-    // Scales with the reduction knob (0-40 dB mapped to alpha 2.0-8.0).
-    const float alpha = 2.0f + (reductionDB / 40.0f) * 6.0f;
+    // Oversubtraction factor: 1.5–4.0 (reduced from 2.0–8.0 for less
+    // aggressive removal and better music preservation).
+    const float alpha = 1.5f + (reductionDB / 40.0f) * 2.5f;
 
-    // Frequency-dependent noise bias: the min-follower tracks the minimum
-    // of Rayleigh-distributed FFT magnitudes.  We use a lower bias in the
-    // mid range (where signal lives) to preserve clarity, and a higher
-    // bias in the HF range (where hiss lives) for stronger noise removal.
-    const float sr   = currentSampleRate.load();
+    const float sr    = currentSampleRate.load();
     const float binHz = sr / static_cast<float> (fftSize);
 
-    // ── Compute magnitudes and update noise tracker ────────────────────────
+    // ── Compute magnitudes, update noise tracker, and track stationarity ──
     std::array<float, numBins> mags;
     std::array<float, numBins> magsSq;
+
+    // Stationarity tracking coefficient (~0.77 s time constant at 44.1 kHz).
+    constexpr float statAlpha = 0.97f;
 
     for (int bin = 0; bin < numBins; ++bin)
     {
@@ -381,38 +465,83 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
         if (updateSharedData)
             inputSpectrumDB[bin] = juce::Decibels::gainToDecibels (mags[bin], -150.0f);
 
-        // Adaptive noise floor tracker (min-follower)
-        // Runs on ALL channels for a more stable noise estimate.
+        runningMean[bin]   = statAlpha * runningMean[bin]   + (1.0f - statAlpha) * mags[bin];
+        runningMeanSq[bin] = statAlpha * runningMeanSq[bin] + (1.0f - statAlpha) * magsSq[bin];
+
+        // ── Adaptive noise floor tracker ──────────────────────────────────
+        //  Converges UPWARD from near-zero: the release branch grows the
+        //  profile toward the observed signal; the attack branch pulls it
+        //  down.  Equilibrium ≈ 14th percentile of the magnitude distribution
+        //  (close to the noise floor for Rayleigh-distributed noise).
+        //  The release is gated by stationarity so that the profile only
+        //  rises in noise-like (stationary) bins, protecting the estimate
+        //  from being inflated by musical content.
         if (isAdaptive)
         {
             if (mags[bin] < noiseProfile[bin])
             {
-                // Scale attack by 1/numChannels so each channel
-                // contributes proportionally to the estimate
-                const float floorAttack = 0.06f / numActiveChannels;
+                // Fast attack: converge down toward minimum
+                const float floorAttack = 0.06f / static_cast<float> (numActiveChannels);
                 noiseProfile[bin] += floorAttack * (mags[bin] - noiseProfile[bin]);
             }
             else
             {
-                noiseProfile[bin] *= (1.0f + 0.001f / numActiveChannels);
+                // Stationarity-gated release: only grow in noise-like bins
+                const float mean   = runningMean[bin];
+                const float meanSq = runningMeanSq[bin];
+                const float var    = std::max (0.0f, meanSq - mean * mean);
+                const float stddev = std::sqrt (var);
+                const float cv     = (mean > 1e-10f) ? (stddev / mean) : 0.0f;
+
+                // Stationarity: 1.0 = noise-like (low CV), 0.0 = music (high CV)
+                const float stationarity = 1.0f - juce::jlimit (0.0f, 1.0f,
+                                                                  (cv - 0.5f) / 1.0f);
+
+                // Faster initial convergence when profile is far from signal
+                const float baseRelease =
+                    (noiseProfile[bin] < mags[bin] * 0.1f) ? 0.03f : 0.01f;
+
+                const float releaseRate = baseRelease * stationarity
+                                        / static_cast<float> (numActiveChannels);
+
+                noiseProfile[bin] += releaseRate * (mags[bin] - noiseProfile[bin]);
             }
+
             if (updateSharedData)
                 noiseProfileDisplay[bin] = noiseProfile[bin];
         }
     }
 
-    // ── Tonal peak detection (protect strong harmonics from over-gating) ──
-    //  Only protect bins that are prominent tonal peaks (at least 10 dB above
-    //  their neighbors).  This prevents artifacts on strong harmonics while
-    //  still allowing broadband noise gating everywhere else.
+    // ── Tonal peak detection (protect harmonics from over-gating) ─────────
+    //  Protect bins that are at least 7 dB above neighbours (5× power),
+    //  and extend protection to immediate neighbours.
     std::array<bool, numBins> isTonalPeak {};
     for (int bin = 3; bin < numBins - 3; ++bin)
     {
         float neighborAvg = (magsSq[bin - 2] + magsSq[bin - 1]
                            + magsSq[bin + 1] + magsSq[bin + 2]) * 0.25f;
-        // 10 dB above neighbors in power = 10x power ratio
-        if (magsSq[bin] > neighborAvg * 10.0f)
+
+        if (magsSq[bin] > neighborAvg * 5.0f)
+        {
             isTonalPeak[bin] = true;
+            if (bin > 0)            isTonalPeak[bin - 1] = true;
+            if (bin < numBins - 1)  isTonalPeak[bin + 1] = true;
+        }
+    }
+
+    // ── Pre-compute per-bin stationarity (for music-aware gating) ─────────
+    std::array<float, numBins> binStationarity {};
+    for (int bin = 0; bin < numBins; ++bin)
+    {
+        const float mean   = runningMean[bin];
+        const float meanSq = runningMeanSq[bin];
+        const float var    = std::max (0.0f, meanSq - mean * mean);
+        const float stddev = std::sqrt (var);
+        const float cv     = (mean > 1e-10f) ? (stddev / mean) : 0.0f;
+
+        // 1.0 = noise-like, 0.0 = music-like
+        binStationarity[bin] = 1.0f - juce::jlimit (0.0f, 1.0f,
+                                                      (cv - 0.5f) / 1.0f);
     }
 
     // ── Per-bin gain computation (Wiener-style spectral subtraction) ──────
@@ -422,17 +551,17 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
     {
         const float freq = static_cast<float> (bin) * binHz;
 
-        // Frequency-dependent noise bias:
-        //   Below 2 kHz: bias = 1.2 (conservative, preserve signal)
-        //   2-4 kHz: ramp from 1.2 to 2.5
-        //   Above 4 kHz: bias = 2.5 (aggressive, target hiss)
+        // Frequency-dependent noise bias (reduced from 2.5 to 1.8 for HF):
+        //   Below 2 kHz: 1.1 (conservative, preserve signal)
+        //   2–4 kHz: ramp 1.1 → 1.8
+        //   Above 4 kHz: 1.8 (target hiss, but gentler than before)
         float noiseBias;
         if (freq < 2000.0f)
-            noiseBias = 1.2f;
+            noiseBias = 1.1f;
         else if (freq < 4000.0f)
-            noiseBias = 1.2f + 1.3f * ((freq - 2000.0f) / 2000.0f);
+            noiseBias = 1.1f + 0.7f * ((freq - 2000.0f) / 2000.0f);
         else
-            noiseBias = 2.5f;
+            noiseBias = 1.8f;
 
         const float noiseEst   = noiseProfile[bin];
         const float thrMult    = perBinThreshold[bin];
@@ -443,8 +572,16 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
         if (magsSq[bin] > 1e-20f)
         {
             const float noiseSq = noiseLevel * noiseLevel;
-            // Use lower alpha for tonal peaks to preserve harmonics
-            const float binAlpha = isTonalPeak[bin] ? (alpha * 0.3f) : alpha;
+
+            // Base alpha, reduced for tonal peaks
+            float binAlpha = isTonalPeak[bin] ? (alpha * 0.15f) : alpha;
+
+            // Stationarity-aware alpha: reduce gating for music-like bins.
+            // Noise bins (stationarity≈1) get full alpha.
+            // Music bins (stationarity≈0) get 30% of alpha.
+            const float stFactor = 0.3f + 0.7f * binStationarity[bin];
+            binAlpha *= stFactor;
+
             const float subtracted = 1.0f - binAlpha * (noiseSq / magsSq[bin]);
             gain = std::sqrt (std::max (0.0f, subtracted));
         }
@@ -488,9 +625,9 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
     }
 
     // ── Asymmetric temporal smoothing & apply gains ─────────────────────────
-    //  Fast attack (let signal through quickly when gain increases) +
-    //  slow release (smooth noise removal to suppress musical noise).
-    //  The smoothing parameter controls the release time.
+    float noiseRemovedPower = 0.0f;
+    float musicRemovedPower = 0.0f;
+
     for (int bin = 0; bin < numBins; ++bin)
     {
         const float prev = ch.prevGain[bin];
@@ -498,14 +635,11 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
 
         if (gains[bin] > prev)
         {
-            // Attack: gain is increasing (signal onset) – react quickly
             constexpr float attackCoeff = 0.15f;
             g = prev + attackCoeff * (gains[bin] - prev);
         }
         else
         {
-            // Release: gain is decreasing (signal offset) – smooth slowly
-            // to avoid musical noise artifacts during decays
             const float releaseCoeff = smoothPct;
             g = prev + (1.0f - releaseCoeff) * (gains[bin] - prev);
         }
@@ -513,8 +647,6 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
         g = juce::jlimit (spectralFloor, 1.0f, g);
         ch.prevGain[bin] = g;
 
-        // Apply gain to non-negative frequency bins only.
-        // The inverse FFT handles conjugate symmetry internally.
         fftData[2 * bin]     *= g;
         fftData[2 * bin + 1] *= g;
 
@@ -524,6 +656,30 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
                                     + fftData[2 * bin + 1] * fftData[2 * bin + 1]);
             outputSpectrumDB[bin] = juce::Decibels::gainToDecibels (outMag, -150.0f);
         }
+
+        // ── Noise Purity: classify removed energy as noise vs music ──────
+        if (updateSharedData && g < 0.999f)
+        {
+            const float removedPower = magsSq[bin] * (1.0f - g * g);
+            const float st = binStationarity[bin];
+
+            noiseRemovedPower += removedPower * st;
+            musicRemovedPower += removedPower * (1.0f - st);
+        }
+    }
+
+    // ── Update Noise Purity metric (smoothed) ────────────────────────────────
+    if (updateSharedData)
+    {
+        const float totalRemoved = noiseRemovedPower + musicRemovedPower;
+        if (totalRemoved > 1e-20f)
+        {
+            const float purity = noiseRemovedPower / totalRemoved;
+            constexpr float puritySmooth = 0.95f;
+            smoothedNoisePurity = puritySmooth * smoothedNoisePurity
+                                + (1.0f - puritySmooth) * purity;
+        }
+        metricNoisePurity.store (smoothedNoisePurity);
     }
 }
 

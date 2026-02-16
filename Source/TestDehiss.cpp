@@ -9,6 +9,13 @@
     Test 2 (Noise only):
       • Pure white noise at −30 dBFS
       • Verify: significant noise reduction
+
+    Test 3 (Silence):
+      • Verify: silence preserved
+
+    Test 4 (Music Preservation):
+      • Complex harmonic signal (chord) + noise
+      • Verify: harmonic energy is preserved (< 3 dB loss)
   ==============================================================================
 */
 
@@ -108,13 +115,91 @@ static TestResult runTest (const char* name, const std::vector<float>& testL,
 }
 
 //==============================================================================
+//  Test 4 helper: run processor and return output buffer
+//==============================================================================
+static std::vector<float> processSignal (const std::vector<float>& input,
+                                          int totalSamples)
+{
+    HisstoryAudioProcessor proc;
+    constexpr double sampleRate = 44100.0;
+    constexpr int    blockSize  = 512;
+
+    proc.setPlayConfigDetails (1, 1, sampleRate, blockSize);
+    proc.prepareToPlay (sampleRate, blockSize);
+
+    const int numBlocks = totalSamples / blockSize;
+    std::vector<float> output (totalSamples, 0.0f);
+    juce::MidiBuffer midi;
+
+    for (int b = 0; b < numBlocks; ++b)
+    {
+        juce::AudioBuffer<float> buf (1, blockSize);
+        auto* L = buf.getWritePointer (0);
+
+        for (int i = 0; i < blockSize; ++i)
+            L[i] = input[b * blockSize + i];
+
+        proc.processBlock (buf, midi);
+
+        for (int i = 0; i < blockSize; ++i)
+            output[b * blockSize + i] = L[i];
+    }
+
+    return output;
+}
+
+//==============================================================================
+//  Measure RMS power of a specific frequency band via Goertzel
+//==============================================================================
+static double bandRMS (const std::vector<float>& signal,
+                       int start, int end,
+                       double centreFreq, double bandwidth,
+                       double sampleRate)
+{
+    const int N = end - start;
+    if (N <= 0) return 0.0;
+
+    double power = 0.0;
+    int count = 0;
+
+    const int fftSize = 4096;
+    const double binHz = sampleRate / fftSize;
+    const int lowBin  = std::max (1, (int)((centreFreq - bandwidth / 2.0) / binHz));
+    const int highBin = std::min (fftSize / 2, (int)((centreFreq + bandwidth / 2.0) / binHz));
+
+    for (int pos = start; pos + fftSize <= end; pos += fftSize / 2)
+    {
+        std::vector<double> frame (fftSize, 0.0);
+        for (int i = 0; i < fftSize; ++i)
+            frame[i] = signal[pos + i];
+
+        for (int bin = lowBin; bin <= highBin; ++bin)
+        {
+            double realSum = 0.0, imagSum = 0.0;
+            const double omega = 2.0 * 3.14159265358979 * bin / fftSize;
+            for (int n = 0; n < fftSize; ++n)
+            {
+                realSum += frame[n] * std::cos (omega * n);
+                imagSum -= frame[n] * std::sin (omega * n);
+            }
+            power += realSum * realSum + imagSum * imagSum;
+        }
+        count++;
+    }
+
+    return (count > 0) ? std::sqrt (power / count) : 0.0;
+}
+
+//==============================================================================
 int main()
 {
     constexpr double sampleRate   = 44100.0;
     constexpr int    blockSize    = 512;
-    constexpr int    numBlocks    = 600;           // ≈ 7 seconds
+    constexpr int    numBlocks    = 800;           // ≈ 9.3 seconds
     constexpr int    totalSamples = numBlocks * blockSize;
-    constexpr int    skip         = HisstoryAudioProcessor::fftSize + 4096;
+
+    // Skip enough for adaptive profile convergence (~3 seconds)
+    constexpr int    skip = static_cast<int> (sampleRate * 3.5);
 
     std::srand (42);
 
@@ -146,18 +231,87 @@ int main()
     std::vector<float> sig3 (totalSamples, 0.0f);
     auto r3 = runTest ("Silence", sig3, totalSamples, skip);
 
+    // ── Test 4: music preservation (complex harmonic signal + noise) ─────────
+    //  Generates a chord-like signal (440 Hz + harmonics at decreasing
+    //  amplitudes) mixed with white noise.  Verifies that the harmonic
+    //  energy is preserved within 6 dB after de-hissing.
+    std::printf ("\n=== Music Preservation (chord + noise) ===\n");
+
+    constexpr float pi2 = 2.0f * 3.14159265f;
+    const float harmonicFreqs[] = { 440.0f, 880.0f, 1320.0f, 1760.0f,
+                                     2200.0f, 3520.0f, 4400.0f };
+    const float harmonicAmps[]  = { 0.08f, 0.06f, 0.04f, 0.03f,
+                                     0.02f, 0.015f, 0.01f };
+    constexpr int numHarmonics = 7;
+
+    std::vector<float> sigMusic (totalSamples, 0.0f);
+    std::vector<float> sigMusicClean (totalSamples, 0.0f);
+    std::srand (77);
+
+    for (int i = 0; i < totalSamples; ++i)
+    {
+        const float t = static_cast<float> (i) / static_cast<float> (sampleRate);
+
+        float musicSample = 0.0f;
+        for (int h = 0; h < numHarmonics; ++h)
+            musicSample += harmonicAmps[h] * std::sin (pi2 * harmonicFreqs[h] * t);
+
+        sigMusicClean[i] = musicSample;
+
+        const float noise = (static_cast<float> (std::rand()) / RAND_MAX * 2.0f - 1.0f)
+                            * 0.01f;
+        sigMusic[i] = musicSample + noise;
+    }
+
+    auto output = processSignal (sigMusic, totalSamples);
+
+    // Measure harmonic band energy in input and output
+    double inputHarmonicPower  = 0.0;
+    double outputHarmonicPower = 0.0;
+
+    for (int h = 0; h < numHarmonics; ++h)
+    {
+        double inP  = bandRMS (sigMusic, skip, totalSamples,
+                               harmonicFreqs[h], 40.0, sampleRate);
+        double outP = bandRMS (output, skip, totalSamples,
+                               harmonicFreqs[h], 40.0, sampleRate);
+        inputHarmonicPower  += inP * inP;
+        outputHarmonicPower += outP * outP;
+
+        double changeDB = 20.0 * std::log10 ((outP + 1e-20) / (inP + 1e-20));
+        std::printf ("  Harmonic %.0f Hz: input=%.4f  output=%.4f  change=%+.1f dB\n",
+                     harmonicFreqs[h], inP, outP, changeDB);
+    }
+
+    double harmonicChangeDB = 10.0 * std::log10 (
+        (outputHarmonicPower + 1e-20) / (inputHarmonicPower + 1e-20));
+
+    // Measure noise band energy (between harmonics, e.g. 600-800 Hz)
+    double inNoise  = bandRMS (sigMusic, skip, totalSamples, 700.0, 200.0, sampleRate);
+    double outNoise = bandRMS (output, skip, totalSamples, 700.0, 200.0, sampleRate);
+    double noiseChangeDB = 20.0 * std::log10 ((outNoise + 1e-20) / (inNoise + 1e-20));
+
+    std::printf ("  Total harmonic change: %+.1f dB\n", harmonicChangeDB);
+    std::printf ("  Noise band (700 Hz):   %+.1f dB\n", noiseChangeDB);
+
+    bool r4pass = true;
+    if (harmonicChangeDB < -6.0)
+    {
+        std::printf ("FAIL: harmonic energy lost by %.1f dB (max allowed: 6 dB)\n",
+                     -harmonicChangeDB);
+        r4pass = false;
+    }
+
     // ── Summary ──────────────────────────────────────────────────────────────
     std::printf ("\n================= SUMMARY =================\n");
 
     bool allPass = true;
 
-    // Test 1: no gain boost
     if (r1.pass && r1.diffDB <= 0.5)
         std::printf ("Test 1: PASS  (no gain boost: %+.2f dB)\n", r1.diffDB);
     else
     { std::printf ("Test 1: FAIL\n"); allPass = false; }
 
-    // Test 2: noise should be reduced
     if (r2.pass && r2.diffDB < -1.0)
         std::printf ("Test 2: PASS  (noise reduced by %.1f dB)\n", -r2.diffDB);
     else if (r2.diffDB >= -1.0)
@@ -166,11 +320,17 @@ int main()
     else
     { std::printf ("Test 2: FAIL\n"); allPass = false; }
 
-    // Test 3: silence in → silence out
     if (r3.pass && r3.outPeak < 0.0001)
         std::printf ("Test 3: PASS  (silence preserved)\n");
     else
     { std::printf ("Test 3: FAIL  (output peak = %.8f)\n", r3.outPeak); allPass = false; }
+
+    if (r4pass && harmonicChangeDB > -6.0)
+        std::printf ("Test 4: PASS  (music preserved: %+.1f dB harmonic change)\n",
+                     harmonicChangeDB);
+    else
+    { std::printf ("Test 4: FAIL  (music lost: %+.1f dB harmonic change)\n",
+                   harmonicChangeDB); allPass = false; }
 
     std::printf ("===========================================\n");
     std::printf ("Overall: %s\n", allPass ? "ALL PASS" : "SOME FAILED");

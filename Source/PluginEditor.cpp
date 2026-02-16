@@ -9,6 +9,7 @@
 #include "PluginEditor.h"
 
 using namespace HisstoryColours;
+using namespace HisstoryConstants;
 
 //==============================================================================
 //  HisstoryLookAndFeel
@@ -42,15 +43,12 @@ void HisstoryLookAndFeel::drawLinearSlider (juce::Graphics& g,
     const float top    = static_cast<float> (y) + 6.0f;
     const float bottom = static_cast<float> (y + h) - 6.0f;
 
-    // Track background.
     g.setColour (sliderTrack);
     g.drawLine (cx, top, cx, bottom, 3.0f);
 
-    // Filled portion (below thumb).
     g.setColour (accentBright);
     g.drawLine (cx, sliderPos, cx, bottom, 3.0f);
 
-    // Thumb.
     const float thumbR = 7.0f;
     g.setColour (textBright);
     g.fillEllipse (cx - thumbR, sliderPos - thumbR, thumbR * 2.0f, thumbR * 2.0f);
@@ -130,12 +128,11 @@ SpectrumDisplay::SpectrumDisplay (HisstoryAudioProcessor& p) : processor (p)
 
 void SpectrumDisplay::resized()
 {
-    // Leave room for axis labels INSIDE the component.
     plotArea = getLocalBounds().toFloat()
                   .withTrimmedLeft   (8.0f)
-                  .withTrimmedBottom (22.0f)   // frequency labels
-                  .withTrimmedTop    (4.0f)
-                  .withTrimmedRight  (44.0f);  // dB labels
+                  .withTrimmedBottom (22.0f)
+                  .withTrimmedTop    (22.0f)    // room for legend inside
+                  .withTrimmedRight  (44.0f);
 }
 
 // ── Coordinate mapping ──────────────────────────────────────────────────────
@@ -145,8 +142,10 @@ float SpectrumDisplay::freqToX (float hz) const
     float logMin = std::log10 (minFreq);
     float logMax = std::log10 (maxFreq);
     float logF   = std::log10 (std::max (hz, minFreq));
-    return plotArea.getX()
-           + (logF - logMin) / (logMax - logMin) * plotArea.getWidth();
+    float t = (logF - logMin) / (logMax - logMin);
+    // Apply power > 1.0 to give more space to higher frequencies
+    t = std::pow (t, 0.85f);
+    return plotArea.getX() + t * plotArea.getWidth();
 }
 
 float SpectrumDisplay::dbToY (float db) const
@@ -160,6 +159,8 @@ float SpectrumDisplay::xToFreq (float x) const
     float logMin = std::log10 (minFreq);
     float logMax = std::log10 (maxFreq);
     float t = (x - plotArea.getX()) / plotArea.getWidth();
+    // Inverse of the power mapping
+    t = std::pow (std::max (t, 0.0f), 1.0f / 0.85f);
     return std::pow (10.0f, logMin + t * (logMax - logMin));
 }
 
@@ -176,7 +177,6 @@ void SpectrumDisplay::updateSpectrumData()
     constexpr float decay = 0.75f;
     for (int i = 0; i < HisstoryAudioProcessor::numBins; ++i)
     {
-        // Raw FFT dB → approximate dBFS by adding normalisation offset.
         float inFS  = processor.inputSpectrumDB[i]  + fftNormDB;
         float outFS = processor.outputSpectrumDB[i] + fftNormDB;
 
@@ -199,6 +199,41 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     drawSpectrumCurve (g, dispOutput, outputCurve, 1.5f);
     drawThresholdCurve (g);
     drawBandPoints (g);
+    drawLegend (g);
+}
+
+// ── Legend (drawn inside spectrum display, top-left) ────────────────────────
+
+void SpectrumDisplay::drawLegend (juce::Graphics& g)
+{
+    float legendY = plotArea.getY() - 16.0f;
+    float legendX = plotArea.getX() + 6.0f;
+    g.setFont (11.0f);
+
+    // Input
+    g.setColour (inputCurve);
+    g.fillRoundedRectangle (legendX, legendY + 5.0f, 16.0f, 2.5f, 1.0f);
+    g.setColour (textNormal);
+    g.drawText ("Input", (int)(legendX + 20), (int)legendY, 36, 14,
+                juce::Justification::centredLeft);
+
+    legendX += 62.0f;
+
+    // Output
+    g.setColour (outputCurve);
+    g.fillRoundedRectangle (legendX, legendY + 5.0f, 16.0f, 2.5f, 1.0f);
+    g.setColour (textNormal);
+    g.drawText ("Output", (int)(legendX + 20), (int)legendY, 44, 14,
+                juce::Justification::centredLeft);
+
+    legendX += 70.0f;
+
+    // Threshold
+    g.setColour (thresholdCurve);
+    g.fillRoundedRectangle (legendX, legendY + 5.0f, 16.0f, 2.5f, 1.0f);
+    g.setColour (textNormal);
+    g.drawText ("Threshold", (int)(legendX + 20), (int)legendY, 60, 14,
+                juce::Justification::centredLeft);
 }
 
 // ── Grid ────────────────────────────────────────────────────────────────────
@@ -207,13 +242,15 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
 {
     g.setFont (11.0f);
 
-    // Frequency lines.
-    const float freqLines[] = { 50, 100, 200, 500, 1000, 2000, 5000, 10000 };
-    const char* freqLabels[] = { "50", "100", "200", "500", "1k", "2k", "5k", "10k" };
+    // Frequency lines (starting at 100 Hz, emphasis on higher frequencies)
+    const float freqLines[] = { 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
+    const char* freqLabels[] = { "100", "200", "500", "1k", "2k", "5k", "10k", "20k" };
 
     for (int i = 0; i < 8; ++i)
     {
         float x = freqToX (freqLines[i]);
+        if (x < plotArea.getX() || x > plotArea.getRight()) continue;
+
         g.setColour (gridLine);
         g.drawVerticalLine (static_cast<int> (x),
                             plotArea.getY(), plotArea.getBottom());
@@ -225,7 +262,7 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
                     juce::Justification::centred);
     }
 
-    // "Hz" label.
+    // "Hz" label
     g.setColour (gridText);
     g.drawText ("Hz",
                 juce::Rectangle<float> (plotArea.getRight() - 16.0f,
@@ -233,8 +270,8 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
                                          24.0f, 16.0f),
                 juce::Justification::centred);
 
-    // dB lines – labels drawn in the right margin (inside the component).
-    for (float db = 0.0f; db >= -90.0f; db -= 10.0f)
+    // dB lines: from -20 dB down to -100 dB
+    for (float db = maxDB; db >= minDB; db -= 10.0f)
     {
         float y = dbToY (db);
         g.setColour (gridLine);
@@ -247,7 +284,7 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
                     juce::Justification::centredLeft);
     }
 
-    // "dB" label at top-right.
+    // "dB" label at top-right
     g.drawText ("dB",
                 juce::Rectangle<float> (plotArea.getRight() + 4.0f,
                                          plotArea.getY() - 2.0f,
@@ -294,6 +331,7 @@ void SpectrumDisplay::drawThresholdCurve (juce::Graphics& g)
     const float sr = processor.currentSampleRate.load();
     const float globalThr = processor.apvts.getRawParameterValue ("threshold")->load();
     const bool  hasProfile = processor.noiseProfileReady.load();
+    const bool  isAdaptive = processor.apvts.getRawParameterValue ("adaptive")->load() > 0.5f;
 
     juce::Path path;
     bool started = false;
@@ -301,6 +339,9 @@ void SpectrumDisplay::drawThresholdCurve (juce::Graphics& g)
     auto getThresholdDB = [&] (float freq) -> float
     {
         float bandOff = processor.interpolateBandOffset (freq);
+        if (isAdaptive)
+            bandOff += HisstoryAudioProcessor::adaptiveBandBoost;
+
         float offsetDB = globalThr + bandOff;
 
         if (hasProfile)
@@ -314,7 +355,7 @@ void SpectrumDisplay::drawThresholdCurve (juce::Graphics& g)
             return noiseDB + offsetDB;
         }
 
-        return -50.0f + offsetDB;   // fallback baseline in dBFS
+        return -50.0f + offsetDB;
     };
 
     for (float logF = std::log10 (minFreq); logF <= std::log10 (maxFreq); logF += 0.02f)
@@ -340,12 +381,15 @@ void SpectrumDisplay::drawBandPoints (juce::Graphics& g)
     const float sr = processor.currentSampleRate.load();
     const float globalThr = processor.apvts.getRawParameterValue ("threshold")->load();
     const bool  hasProfile = processor.noiseProfileReady.load();
+    const bool  isAdaptive = processor.apvts.getRawParameterValue ("adaptive")->load() > 0.5f;
 
     for (int i = 0; i < HisstoryAudioProcessor::numBands; ++i)
     {
         float freq    = HisstoryAudioProcessor::bandFrequencies[i];
         float bandOff = processor.apvts.getRawParameterValue (
                             "band" + juce::String (i + 1))->load();
+        if (isAdaptive)
+            bandOff += HisstoryAudioProcessor::adaptiveBandBoost;
         float offsetDB = globalThr + bandOff;
 
         float effectiveDB;
@@ -370,16 +414,13 @@ void SpectrumDisplay::drawBandPoints (juce::Graphics& g)
 
         const float r = 12.0f;
 
-        // Outer ring.
         g.setColour (thresholdCurve);
         g.fillEllipse (x - r, y - r, r * 2.0f, r * 2.0f);
 
-        // Inner fill (dark).
         g.setColour (plotBackground);
         g.fillEllipse (x - r + 2.5f, y - r + 2.5f,
                        (r - 2.5f) * 2.0f, (r - 2.5f) * 2.0f);
 
-        // Number.
         g.setColour (thresholdCurve);
         g.setFont (juce::Font (12.0f).boldened());
         g.drawText (juce::String (i + 1),
@@ -395,12 +436,15 @@ void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
     const float sr = processor.currentSampleRate.load();
     const float globalThr = processor.apvts.getRawParameterValue ("threshold")->load();
     const bool  hasProfile = processor.noiseProfileReady.load();
+    const bool  isAdaptive = processor.apvts.getRawParameterValue ("adaptive")->load() > 0.5f;
 
     for (int i = 0; i < HisstoryAudioProcessor::numBands; ++i)
     {
         float freq    = HisstoryAudioProcessor::bandFrequencies[i];
         float bandOff = processor.apvts.getRawParameterValue (
                             "band" + juce::String (i + 1))->load();
+        if (isAdaptive)
+            bandOff += HisstoryAudioProcessor::adaptiveBandBoost;
         float offsetDB = globalThr + bandOff;
 
         float effectiveDB;
@@ -442,6 +486,7 @@ void SpectrumDisplay::mouseDrag (const juce::MouseEvent& e)
     const float sr = processor.currentSampleRate.load();
     const float globalThr = processor.apvts.getRawParameterValue ("threshold")->load();
     const bool  hasProfile = processor.noiseProfileReady.load();
+    const bool  isAdaptive = processor.apvts.getRawParameterValue ("adaptive")->load() > 0.5f;
 
     float targetDB = yToDb (e.position.y);
 
@@ -462,6 +507,8 @@ void SpectrumDisplay::mouseDrag (const juce::MouseEvent& e)
     }
 
     float newOffset = targetDB - baseDB - globalThr;
+    if (isAdaptive)
+        newOffset -= HisstoryAudioProcessor::adaptiveBandBoost;
     newOffset = juce::jlimit (-30.0f, 30.0f, newOffset);
 
     auto* param = processor.apvts.getParameter ("band" + juce::String (draggingBand + 1));
@@ -481,6 +528,23 @@ void SpectrumDisplay::mouseUp (const juce::MouseEvent&)
 //==============================================================================
 //  HisstoryAudioProcessorEditor
 //==============================================================================
+
+static void setupMetricNameLabel (juce::Label& label, const juce::String& text)
+{
+    label.setText (text, juce::dontSendNotification);
+    label.setJustificationType (juce::Justification::centredLeft);
+    label.setFont (juce::Font (11.0f));
+    label.setColour (juce::Label::textColourId, HisstoryColours::gridText);
+}
+
+static void setupMetricValueLabel (juce::Label& label)
+{
+    label.setText ("---", juce::dontSendNotification);
+    label.setJustificationType (juce::Justification::centredRight);
+    label.setFont (juce::Font (12.0f).boldened());
+    label.setColour (juce::Label::textColourId, HisstoryColours::textBright);
+}
+
 HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     HisstoryAudioProcessor& p)
     : AudioProcessorEditor (&p),
@@ -496,6 +560,11 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     adaptiveButton.setButtonText ("Adaptive mode");
     addAndMakeVisible (adaptiveButton);
     adaptiveAttach = std::make_unique<ButtonAttach> (processor.apvts, "adaptive", adaptiveButton);
+
+    // ── Bypass button (in top bar) ───────────────────────────────────────────
+    bypassButton.setClickingTogglesState (true);
+    addAndMakeVisible (bypassButton);
+    bypassAttach = std::make_unique<ButtonAttach> (processor.apvts, "bypass", bypassButton);
 
     // ── Threshold slider ─────────────────────────────────────────────────────
     thresholdSlider.setSliderStyle (juce::Slider::LinearVertical);
@@ -535,10 +604,27 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     reductionValue.setColour (juce::Label::backgroundColourId, accent.withAlpha (0.15f));
     addAndMakeVisible (reductionValue);
 
-    // ── Bypass button ────────────────────────────────────────────────────────
-    bypassButton.setClickingTogglesState (true);
-    addAndMakeVisible (bypassButton);
-    bypassAttach = std::make_unique<ButtonAttach> (processor.apvts, "bypass", bypassButton);
+    // ── Metrics ──────────────────────────────────────────────────────────────
+    metricsHeader.setText ("METRICS", juce::dontSendNotification);
+    metricsHeader.setJustificationType (juce::Justification::centred);
+    metricsHeader.setFont (juce::Font (11.0f).boldened());
+    metricsHeader.setColour (juce::Label::textColourId, gridText);
+    addAndMakeVisible (metricsHeader);
+
+    setupMetricNameLabel (metricHfRemovedName,  "HF Removed");
+    setupMetricNameLabel (metricMidKeptName,    "Mid Preserved");
+    setupMetricNameLabel (metricOutputName,     "Output Level");
+    setupMetricNameLabel (metricPurityName,     "Noise Purity");
+
+    setupMetricValueLabel (metricHfRemovedVal);
+    setupMetricValueLabel (metricMidKeptVal);
+    setupMetricValueLabel (metricOutputVal);
+    setupMetricValueLabel (metricPurityVal);
+
+    addAndMakeVisible (metricHfRemovedName);   addAndMakeVisible (metricHfRemovedVal);
+    addAndMakeVisible (metricMidKeptName);     addAndMakeVisible (metricMidKeptVal);
+    addAndMakeVisible (metricOutputName);      addAndMakeVisible (metricOutputVal);
+    addAndMakeVisible (metricPurityName);      addAndMakeVisible (metricPurityVal);
 
     startTimerHz (30);
 }
@@ -555,34 +641,52 @@ void HisstoryAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds();
 
-    // ── Top control bar ──────────────────────────────────────────────────────
-    auto topBar = bounds.removeFromTop (50);
-    topBar.reduce (12, 8);
+    // ── Top control bar (compact) ────────────────────────────────────────────
+    auto topBar = bounds.removeFromTop (36);
+    topBar.reduce (12, 6);
 
     adaptiveButton.setBounds (topBar.removeFromLeft (160));
+    bypassButton.setBounds (topBar.removeFromRight (80).reduced (0, 2));
 
-    // ── Bottom bar ───────────────────────────────────────────────────────────
-    auto bottomBar = bounds.removeFromBottom (42);
-    bottomBar.reduce (12, 6);
-    bypassButton.setBounds (bottomBar.removeFromLeft (90).reduced (0, 2));
-
-    // ── Right slider panel ───────────────────────────────────────────────────
+    // ── Right panel (sliders + metrics) ──────────────────────────────────────
     auto rightPanel = bounds.removeFromRight (180);
     rightPanel.reduce (8, 4);
 
-    auto thrCol = rightPanel.removeFromLeft (rightPanel.getWidth() / 2);
-    auto redCol = rightPanel;
+    // Slider columns
+    auto sliderSection = rightPanel.removeFromTop (220);
+    auto thrCol = sliderSection.removeFromLeft (sliderSection.getWidth() / 2);
+    auto redCol = sliderSection;
 
-    thresholdLabel.setBounds  (thrCol.removeFromTop (20));
-    thresholdValue.setBounds  (thrCol.removeFromBottom (26).reduced (8, 0));
-    thresholdSlider.setBounds (thrCol.reduced (thrCol.getWidth() / 2 - 20, 4));
+    thresholdLabel.setBounds  (thrCol.removeFromTop (18));
+    thresholdValue.setBounds  (thrCol.removeFromBottom (24).reduced (6, 0));
+    thresholdSlider.setBounds (thrCol.reduced (thrCol.getWidth() / 2 - 16, 2));
 
-    reductionLabel.setBounds  (redCol.removeFromTop (20));
-    reductionValue.setBounds  (redCol.removeFromBottom (26).reduced (8, 0));
-    reductionSlider.setBounds (redCol.reduced (redCol.getWidth() / 2 - 20, 4));
+    reductionLabel.setBounds  (redCol.removeFromTop (18));
+    reductionValue.setBounds  (redCol.removeFromBottom (24).reduced (6, 0));
+    reductionSlider.setBounds (redCol.reduced (redCol.getWidth() / 2 - 16, 2));
 
-    // ── Spectrum display ─────────────────────────────────────────────────────
-    bounds.reduce (8, 4);
+    // Metrics section
+    rightPanel.removeFromTop (6);
+
+    // Separator line area
+    metricsHeader.setBounds (rightPanel.removeFromTop (18));
+    rightPanel.removeFromTop (4);
+
+    // Metric rows
+    auto layoutMetricRow = [&] (juce::Label& name, juce::Label& value)
+    {
+        auto row = rightPanel.removeFromTop (22);
+        name.setBounds (row.removeFromLeft (row.getWidth() * 2 / 3).reduced (4, 0));
+        value.setBounds (row.reduced (2, 0));
+    };
+
+    layoutMetricRow (metricHfRemovedName,  metricHfRemovedVal);
+    layoutMetricRow (metricMidKeptName,    metricMidKeptVal);
+    layoutMetricRow (metricOutputName,     metricOutputVal);
+    layoutMetricRow (metricPurityName,     metricPurityVal);
+
+    // ── Spectrum display (remaining space, no bottom margin) ─────────────────
+    bounds.reduce (8, 2);
     spectrumDisplay.setBounds (bounds);
 }
 
@@ -593,43 +697,105 @@ void HisstoryAudioProcessorEditor::paint (juce::Graphics& g)
 {
     g.fillAll (background);
 
-    // ── Legend (above spectrum display) ───────────────────────────────────────
+    // Draw a subtle separator line between sliders and metrics
+    auto rightPanel = getLocalBounds().removeFromRight (180);
+    rightPanel.reduce (8, 4);
+    int sepY = rightPanel.getY() + 220 + 2;
+    g.setColour (gridLine);
+    g.drawHorizontalLine (sepY, (float)(rightPanel.getX() + 8),
+                          (float)(rightPanel.getRight() - 8));
+}
+
+//==============================================================================
+//  Metrics computation
+//==============================================================================
+void HisstoryAudioProcessorEditor::updateMetrics()
+{
+    const float sr = processor.currentSampleRate.load();
+    const float binHz = sr / static_cast<float> (HisstoryAudioProcessor::fftSize);
+
+    float inputMidPower  = 0.0f, outputMidPower  = 0.0f;
+    float inputHfPower   = 0.0f, outputHfPower   = 0.0f;
+    float inputTotalPower = 0.0f, outputTotalPower = 0.0f;
+
+    for (int bin = 1; bin < HisstoryAudioProcessor::numBins; ++bin)
     {
-        auto legendY = spectrumDisplay.getY() - 20;
-        auto legendX = spectrumDisplay.getX() + 8;
-        g.setFont (12.0f);
+        float freq = static_cast<float> (bin) * binHz;
 
-        // Input
-        g.setColour (inputCurve);
-        g.fillRoundedRectangle (static_cast<float> (legendX),
-                                static_cast<float> (legendY + 4),
-                                20.0f, 3.0f, 1.0f);
-        g.setColour (textNormal);
-        g.drawText ("Input", legendX + 24, legendY, 40, 16,
-                    juce::Justification::centredLeft);
+        float inDB  = processor.inputSpectrumDB[bin]  + fftNormDB;
+        float outDB = processor.outputSpectrumDB[bin] + fftNormDB;
 
-        legendX += 75;
+        float inPow  = std::pow (10.0f, inDB / 10.0f);
+        float outPow = std::pow (10.0f, outDB / 10.0f);
 
-        // Output
-        g.setColour (outputCurve);
-        g.fillRoundedRectangle (static_cast<float> (legendX),
-                                static_cast<float> (legendY + 4),
-                                20.0f, 3.0f, 1.0f);
-        g.setColour (textNormal);
-        g.drawText ("Output", legendX + 24, legendY, 50, 16,
-                    juce::Justification::centredLeft);
+        if (freq >= 200.0f && freq <= 3000.0f)
+        {
+            inputMidPower  += inPow;
+            outputMidPower += outPow;
+        }
+        if (freq >= 4000.0f && freq <= 16000.0f)
+        {
+            inputHfPower  += inPow;
+            outputHfPower += outPow;
+        }
 
-        legendX += 85;
-
-        // Threshold
-        g.setColour (thresholdCurve);
-        g.fillRoundedRectangle (static_cast<float> (legendX),
-                                static_cast<float> (legendY + 4),
-                                20.0f, 3.0f, 1.0f);
-        g.setColour (textNormal);
-        g.drawText ("Threshold", legendX + 24, legendY, 70, 16,
-                    juce::Justification::centredLeft);
+        inputTotalPower  += inPow;
+        outputTotalPower += outPow;
     }
+
+    float hfRedDB   = 10.0f * std::log10 ((outputHfPower + 1e-20f) / (inputHfPower + 1e-20f));
+    float midPresDB = 10.0f * std::log10 ((outputMidPower + 1e-20f) / (inputMidPower + 1e-20f));
+    float overallDB = 10.0f * std::log10 ((outputTotalPower + 1e-20f) / (inputTotalPower + 1e-20f));
+
+    constexpr float k = 0.92f;
+    smoothHfRemoved  = k * smoothHfRemoved  + (1.0f - k) * hfRedDB;
+    smoothMidKept    = k * smoothMidKept    + (1.0f - k) * midPresDB;
+    smoothOutput     = k * smoothOutput     + (1.0f - k) * overallDB;
+
+    metricHfRemovedVal.setText (
+        juce::String (smoothHfRemoved, 1) + " dB", juce::dontSendNotification);
+    metricMidKeptVal.setText (
+        juce::String (smoothMidKept, 1) + " dB", juce::dontSendNotification);
+    metricOutputVal.setText (
+        juce::String (smoothOutput, 1) + " dB", juce::dontSendNotification);
+
+    // Color-code HF Removed (more negative = better noise removal)
+    if (smoothHfRemoved < -3.0f)
+        metricHfRemovedVal.setColour (juce::Label::textColourId, metricGood);
+    else if (smoothHfRemoved < -1.0f)
+        metricHfRemovedVal.setColour (juce::Label::textColourId, metricWarn);
+    else
+        metricHfRemovedVal.setColour (juce::Label::textColourId, textNormal);
+
+    // Color-code Mid Preserved (closer to 0 = better signal preservation)
+    if (smoothMidKept > -1.0f)
+        metricMidKeptVal.setColour (juce::Label::textColourId, metricGood);
+    else if (smoothMidKept > -3.0f)
+        metricMidKeptVal.setColour (juce::Label::textColourId, metricWarn);
+    else
+        metricMidKeptVal.setColour (juce::Label::textColourId, metricBad);
+
+    // Color-code Output Level (close to 0 = no unwanted gain change)
+    if (std::abs (smoothOutput) < 1.0f)
+        metricOutputVal.setColour (juce::Label::textColourId, metricGood);
+    else if (std::abs (smoothOutput) < 3.0f)
+        metricOutputVal.setColour (juce::Label::textColourId, metricWarn);
+    else
+        metricOutputVal.setColour (juce::Label::textColourId, metricBad);
+
+    // ── Noise Purity: fraction of removed energy that was noise ──────────
+    float purity = processor.metricNoisePurity.load();
+    int purityPct = juce::jlimit (0, 100, static_cast<int> (purity * 100.0f + 0.5f));
+    metricPurityVal.setText (
+        juce::String (purityPct) + "%", juce::dontSendNotification);
+
+    // Color-code: >80% = green (mostly noise), 60-80% = orange, <60% = red
+    if (purityPct >= 80)
+        metricPurityVal.setColour (juce::Label::textColourId, metricGood);
+    else if (purityPct >= 60)
+        metricPurityVal.setColour (juce::Label::textColourId, metricWarn);
+    else
+        metricPurityVal.setColour (juce::Label::textColourId, metricBad);
 }
 
 //==============================================================================
@@ -646,4 +812,6 @@ void HisstoryAudioProcessorEditor::timerCallback()
     reductionValue.setText (
         juce::String (reductionSlider.getValue(), 1),
         juce::dontSendNotification);
+
+    updateMetrics();
 }

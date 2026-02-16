@@ -73,12 +73,21 @@ public:
 
     std::atomic<float> currentSampleRate { 44100.0f };
 
+    /** Noise Purity metric: fraction (0–1) of removed energy that came from
+        stationary (noise-like) bins.  1.0 = all removed content was noise,
+        0.0 = all removed content was music. */
+    std::atomic<float> metricNoisePurity { 0.0f };
+
     /** STFT normalisation factor – public so the test harness can inspect it. */
     float windowCorrection = 2.0f / 3.0f;
 
     /** Interpolate the band-offset curve at an arbitrary frequency (Hz).
         Public so the editor can draw the threshold curve. */
     float interpolateBandOffset (float freqHz) const;
+
+    /** In adaptive mode, band offsets are boosted by this amount so that the
+        default -30 dB offsets become neutral (0 dB effective). */
+    static constexpr float adaptiveBandBoost = 20.0f;
 
     //==========================================================================
     //  Parameter tree
@@ -121,9 +130,30 @@ private:
     //==========================================================================
     std::array<float, numBins>  noiseProfile {};
 
+    //==========================================================================
+    //  Stationarity tracking (for Noise Purity metric)
+    //  Running exponential averages of magnitude and magnitude² per bin.
+    //  The coefficient of variation (stddev / mean) indicates how stationary
+    //  a bin is: low CV = noise-like (stationary), high CV = music-like.
+    //==========================================================================
+    std::array<float, numBins>  runningMean   {};
+    std::array<float, numBins>  runningMeanSq {};
+    float smoothedNoisePurity = 0.5f;
+
     /** Generate a synthetic hiss-shaped default profile so the plugin
         works immediately (before the user presses Learn). */
     void generateDefaultNoiseProfile();
+
+    /** Reset the noise profile to near-zero for adaptive convergence
+        from the bottom (no removal initially). */
+    void resetAdaptiveProfile();
+
+    //==========================================================================
+    //  New-track / silence detection
+    //==========================================================================
+    int  silenceSampleCount = 0;
+    bool wasInSilence       = false;
+    bool lastAdaptiveState  = true;
 
     //==========================================================================
     //  Pre-computed per-bin threshold multiplier
