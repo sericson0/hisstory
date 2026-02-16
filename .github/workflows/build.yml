@@ -1,0 +1,55 @@
+name: Build VST3
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake (Universal Binary)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --config Release --target HisstoryVST_VST3 HisstoryVST_Standalone
+
+      - name: Upload macOS VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hisstory-macOS-VST3
+          path: build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3/
+
+      - name: Upload macOS Standalone
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hisstory-macOS-Standalone
+          path: build/HisstoryVST_artefacts/Release/Standalone/Hisstory.app/
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --target HisstoryVST_VST3 HisstoryVST_Standalone
+
+      - name: Upload Windows VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hisstory-Windows-VST3
+          path: build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3/
+
+      - name: Upload Windows Standalone
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hisstory-Windows-Standalone
+          path: build/HisstoryVST_artefacts/Release/Standalone/Hisstory.exe

@@ -198,12 +198,13 @@ private:
     juce::Label metricOutputName,       metricOutputVal;
     juce::Label metricHLRName,          metricHLRVal;
 
-    juce::Label brandLabel;
+    juce::Image brandLogoImage;
+    juce::Rectangle<int> brandLogoBounds;
 
     float smoothHfRemoved    = 0.0f;
     float smoothMidKept      = 0.0f;
     float smoothOutput       = 0.0f;
-    float smoothHLR          = 1.0f;
+    float smoothHLR          = 0.0f;
 
     using SliderAttach = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttach = juce::AudioProcessorValueTreeState::ButtonAttachment;

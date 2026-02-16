@@ -217,7 +217,7 @@ static juce::AudioBuffer<float> processWithVST3 (
     const juce::String& vst3Path)
 {
     juce::AudioPluginFormatManager formatManager;
-    formatManager.addDefaultFormats();
+    formatManager.addFormat (new juce::VST3PluginFormat());
 
     juce::OwnedArray<juce::PluginDescription> descriptions;
     juce::KnownPluginList pluginList;

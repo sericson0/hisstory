@@ -9,7 +9,7 @@ include(FetchContent)
 FetchContent_Declare(
     JUCE
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-    GIT_TAG        7.0.12
+    GIT_TAG        8.0.12
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(JUCE)
@@ -33,6 +33,9 @@ juce_add_plugin(HisstoryVST
 # Generate the unified JuceHeader.h so source files can #include <JuceHeader.h>
 juce_generate_juce_header(HisstoryVST)
 
+# ── Embedded binary assets (logo) ────────────────────────────────────────────
+juce_add_binary_data(HisstoryAssets SOURCES Logo.png)
+
 # ── Source Files ─────────────────────────────────────────────────────────────
 target_sources(HisstoryVST
     PRIVATE
@@ -46,7 +49,6 @@ target_compile_definitions(HisstoryVST
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
 # ── Link Libraries ──────────────────────────────────────────────────────────
@@ -54,6 +56,7 @@ target_link_libraries(HisstoryVST
     PRIVATE
         juce::juce_audio_utils
         juce::juce_dsp
+        HisstoryAssets
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -71,7 +74,6 @@ target_compile_definitions(TestDehiss PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_DISPLAY_SPLASH_SCREEN=0
     JucePlugin_Name="Hisstory"
     JucePlugin_ManufacturerCode=0x48697374
     JucePlugin_PluginCode=0x48737479
@@ -89,6 +91,7 @@ target_include_directories(TestDehiss PRIVATE
 target_link_libraries(TestDehiss PRIVATE
     juce::juce_audio_utils
     juce::juce_dsp
+    HisstoryAssets
 )
 
 # ── Benchmark executable (comparison test with RX 11) ──────────────────────
@@ -102,7 +105,6 @@ target_compile_definitions(Benchmark PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_PLUGINHOST_VST3=1
     JucePlugin_Name="Hisstory"
     JucePlugin_ManufacturerCode=0x48697374
@@ -123,4 +125,5 @@ target_link_libraries(Benchmark PRIVATE
     juce::juce_audio_processors
     juce::juce_audio_formats
     juce::juce_dsp
+    HisstoryAssets
 )
