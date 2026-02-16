@@ -97,13 +97,13 @@ void HisstoryLookAndFeel::drawButtonBackground (juce::Graphics& g,
     auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
     bool on = button.getToggleState();
 
-    juce::Colour bg = on ? accent : (highlighted ? buttonBgHover : buttonBg);
+    juce::Colour bg = on ? buttonSelected : (highlighted ? buttonBgHover : buttonBg);
     if (down) bg = bg.brighter (0.1f);
 
     g.setColour (bg);
     g.fillRoundedRectangle (bounds, 5.0f);
 
-    g.setColour (on ? accent.brighter (0.3f) : gridLine);
+    g.setColour (on ? buttonSelected.brighter (0.3f) : gridLine);
     g.drawRoundedRectangle (bounds, 5.0f, 1.0f);
 }
 
@@ -124,6 +124,11 @@ SpectrumDisplay::SpectrumDisplay (HisstoryAudioProcessor& p) : processor (p)
 {
     dispInput.fill  (-100.0f);
     dispOutput.fill (-100.0f);
+
+    for (auto& col : spectrogramBuf)
+        col.fill (minDB);
+
+    buildMelFilterbank();
 }
 
 void SpectrumDisplay::resized()
@@ -183,6 +188,9 @@ void SpectrumDisplay::updateSpectrumData()
         dispInput[i]  = decay * dispInput[i]  + (1.0f - decay) * inFS;
         dispOutput[i] = decay * dispOutput[i] + (1.0f - decay) * outFS;
     }
+
+    if (showSpectrogram)
+        updateSpectrogramColumn();
 }
 
 // ── Paint ───────────────────────────────────────────────────────────────────
@@ -194,12 +202,20 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 
     if (plotArea.isEmpty()) return;
 
-    drawGrid (g);
-    drawSpectrumCurve (g, dispInput,  inputCurve.withAlpha (0.5f), 1.0f);
-    drawSpectrumCurve (g, dispOutput, outputCurve, 1.5f);
-    drawThresholdCurve (g);
-    drawBandPoints (g);
-    drawLegend (g);
+    if (showSpectrogram)
+    {
+        drawSpectrogram (g);
+        drawMelGrid (g);
+    }
+    else
+    {
+        drawGrid (g);
+        drawSpectrumCurve (g, dispInput,  inputCurve.withAlpha (0.5f), 1.0f);
+        drawSpectrumCurve (g, dispOutput, outputCurve, 1.5f);
+        drawThresholdCurve (g);
+        drawBandPoints (g);
+        drawLegend (g);
+    }
 }
 
 // ── Legend (drawn inside spectrum display, top-left) ────────────────────────
@@ -433,6 +449,8 @@ void SpectrumDisplay::drawBandPoints (juce::Graphics& g)
 
 void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
 {
+    if (showSpectrogram) return;
+
     const float sr = processor.currentSampleRate.load();
     const float globalThr = processor.apvts.getRawParameterValue ("threshold")->load();
     const bool  hasProfile = processor.noiseProfileReady.load();
@@ -525,6 +543,230 @@ void SpectrumDisplay::mouseUp (const juce::MouseEvent&)
     }
 }
 
+// ── Spectrogram support ─────────────────────────────────────────────────────
+
+void SpectrumDisplay::setSpectrogramMode (bool enabled)
+{
+    if (showSpectrogram == enabled) return;
+    showSpectrogram = enabled;
+
+    if (enabled)
+    {
+        spectrogramImage = {};
+        spectrogramWritePos = 0;
+        for (auto& col : spectrogramBuf)
+            col.fill (minDB);
+    }
+
+    repaint();
+}
+
+void SpectrumDisplay::buildMelFilterbank()
+{
+    melFilters.clear();
+    melFilters.resize (static_cast<size_t> (numMelBins));
+
+    const float sr   = std::max (processor.currentSampleRate.load(), 1.0f);
+    const float binW = sr / static_cast<float> (HisstoryAudioProcessor::fftSize);
+
+    const float melMin = hzToMel (minFreq);
+    const float melMax = hzToMel (std::min (maxFreq, sr * 0.5f));
+
+    // numMelBins + 2 edge points for triangular filters
+    std::vector<float> melEdges (static_cast<size_t> (numMelBins + 2));
+    for (int i = 0; i < numMelBins + 2; ++i)
+        melEdges[static_cast<size_t> (i)] = melToHz (melMin + static_cast<float> (i) / static_cast<float> (numMelBins + 1) * (melMax - melMin));
+
+    for (int m = 0; m < numMelBins; ++m)
+    {
+        const float fLow  = melEdges[static_cast<size_t> (m)];
+        const float fMid  = melEdges[static_cast<size_t> (m + 1)];
+        const float fHigh = melEdges[static_cast<size_t> (m + 2)];
+
+        int binLow  = std::max (1, static_cast<int> (std::floor (fLow  / binW)));
+        int binHigh = std::min (HisstoryAudioProcessor::numBins - 1,
+                                static_cast<int> (std::ceil (fHigh / binW)));
+
+        auto& filt = melFilters[static_cast<size_t> (m)];
+        filt.startBin = binLow;
+        filt.endBin   = binHigh;
+        filt.weights.resize (static_cast<size_t> (binHigh - binLow + 1), 0.0f);
+
+        for (int bin = binLow; bin <= binHigh; ++bin)
+        {
+            float freq = static_cast<float> (bin) * binW;
+            float w = 0.0f;
+            if (freq >= fLow && freq <= fMid && fMid > fLow)
+                w = (freq - fLow) / (fMid - fLow);
+            else if (freq > fMid && freq <= fHigh && fHigh > fMid)
+                w = (fHigh - freq) / (fHigh - fMid);
+            filt.weights[static_cast<size_t> (bin - binLow)] = w;
+        }
+    }
+}
+
+void SpectrumDisplay::updateSpectrogramColumn()
+{
+    if (! showSpectrogram) return;
+
+    auto& col = spectrogramBuf[static_cast<size_t> (spectrogramWritePos)];
+
+    for (int m = 0; m < numMelBins; ++m)
+    {
+        const auto& filt = melFilters[static_cast<size_t> (m)];
+        float sum = 0.0f;
+        float wSum = 0.0f;
+
+        for (int bin = filt.startBin; bin <= filt.endBin; ++bin)
+        {
+            float w = filt.weights[static_cast<size_t> (bin - filt.startBin)];
+            float db = dispOutput[static_cast<size_t> (bin)];
+            float linPow = std::pow (10.0f, db / 10.0f);
+            sum  += w * linPow;
+            wSum += w;
+        }
+
+        float melDB = (wSum > 1e-20f)
+            ? 10.0f * std::log10 (sum / wSum + 1e-20f)
+            : minDB;
+
+        col[static_cast<size_t> (m)] = juce::jlimit (minDB, maxDB, melDB);
+    }
+
+    spectrogramWritePos = (spectrogramWritePos + 1) % numTimeCols;
+}
+
+juce::Colour SpectrumDisplay::dbToColour (float db) const
+{
+    float t = juce::jlimit (0.0f, 1.0f, (db - minDB) / (maxDB - minDB));
+
+    // Perceptual colourmap: dark blue → cyan → yellow → red → white
+    if (t < 0.25f)
+    {
+        float s = t / 0.25f;
+        return juce::Colour::fromFloatRGBA (0.0f, s * 0.3f, 0.15f + s * 0.55f, 1.0f);
+    }
+    else if (t < 0.5f)
+    {
+        float s = (t - 0.25f) / 0.25f;
+        return juce::Colour::fromFloatRGBA (s * 0.2f, 0.3f + s * 0.7f, 0.7f - s * 0.2f, 1.0f);
+    }
+    else if (t < 0.75f)
+    {
+        float s = (t - 0.5f) / 0.25f;
+        return juce::Colour::fromFloatRGBA (0.2f + s * 0.8f, 1.0f - s * 0.2f, 0.5f - s * 0.5f, 1.0f);
+    }
+    else
+    {
+        float s = (t - 0.75f) / 0.25f;
+        return juce::Colour::fromFloatRGBA (1.0f, 0.8f * (1.0f - s) + s, s, 1.0f);
+    }
+}
+
+float SpectrumDisplay::melToY (float mel) const
+{
+    const float melMin = hzToMel (minFreq);
+    const float melMax = hzToMel (maxFreq);
+    float t = (mel - melMin) / (melMax - melMin);
+    return plotArea.getBottom() - t * plotArea.getHeight();
+}
+
+float SpectrumDisplay::yToMel (float y) const
+{
+    const float melMin = hzToMel (minFreq);
+    const float melMax = hzToMel (maxFreq);
+    float t = (plotArea.getBottom() - y) / plotArea.getHeight();
+    return melMin + t * (melMax - melMin);
+}
+
+void SpectrumDisplay::drawSpectrogram (juce::Graphics& g)
+{
+    const int imgW = static_cast<int> (plotArea.getWidth());
+    const int imgH = static_cast<int> (plotArea.getHeight());
+
+    if (imgW <= 0 || imgH <= 0) return;
+
+    if (spectrogramImage.isNull()
+        || spectrogramImage.getWidth() != imgW
+        || spectrogramImage.getHeight() != imgH)
+    {
+        spectrogramImage = juce::Image (juce::Image::RGB, imgW, imgH, true);
+    }
+
+    // Render the full spectrogram image from the circular buffer
+    juce::Image::BitmapData bmp (spectrogramImage,
+                                  juce::Image::BitmapData::writeOnly);
+
+    const int colsToDraw = std::min (imgW, numTimeCols);
+    const float colWidth = static_cast<float> (imgW) / static_cast<float> (colsToDraw);
+
+    for (int col = 0; col < colsToDraw; ++col)
+    {
+        int bufIdx = (spectrogramWritePos - colsToDraw + col + numTimeCols) % numTimeCols;
+        const auto& melCol = spectrogramBuf[static_cast<size_t> (bufIdx)];
+
+        int xStart = static_cast<int> (static_cast<float> (col) * colWidth);
+        int xEnd   = static_cast<int> (static_cast<float> (col + 1) * colWidth);
+        xEnd = std::min (xEnd, imgW);
+
+        for (int py = 0; py < imgH; ++py)
+        {
+            float mel = yToMel (plotArea.getY() + static_cast<float> (py));
+            float melIdx = (mel - hzToMel (minFreq))
+                         / (hzToMel (maxFreq) - hzToMel (minFreq))
+                         * static_cast<float> (numMelBins - 1);
+            melIdx = juce::jlimit (0.0f, static_cast<float> (numMelBins - 1), melIdx);
+
+            int lo = static_cast<int> (melIdx);
+            int hi = std::min (lo + 1, numMelBins - 1);
+            float frac = melIdx - static_cast<float> (lo);
+            float db = melCol[static_cast<size_t> (lo)] * (1.0f - frac)
+                      + melCol[static_cast<size_t> (hi)] * frac;
+
+            juce::Colour c = dbToColour (db);
+
+            for (int px = xStart; px < xEnd; ++px)
+                bmp.setPixelColour (px, py, c);
+        }
+    }
+
+    g.drawImageAt (spectrogramImage,
+                   static_cast<int> (plotArea.getX()),
+                   static_cast<int> (plotArea.getY()));
+}
+
+void SpectrumDisplay::drawMelGrid (juce::Graphics& g)
+{
+    g.setFont (11.0f);
+
+    const float freqLines[] = { 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
+    const char* freqLabels[] = { "100", "200", "500", "1k", "2k", "5k", "10k", "20k" };
+
+    for (int i = 0; i < 8; ++i)
+    {
+        float mel = hzToMel (freqLines[i]);
+        float y = melToY (mel);
+        if (y < plotArea.getY() || y > plotArea.getBottom()) continue;
+
+        g.setColour (HisstoryColours::gridLine.withAlpha (0.5f));
+        g.drawHorizontalLine (static_cast<int> (y),
+                              plotArea.getX(), plotArea.getRight());
+
+        g.setColour (HisstoryColours::gridText);
+        g.drawText (freqLabels[i],
+                    juce::Rectangle<float> (plotArea.getRight() + 4.0f,
+                                             y - 7.0f, 36.0f, 14.0f),
+                    juce::Justification::centredLeft);
+    }
+
+    g.setColour (HisstoryColours::gridText);
+    g.drawText ("Hz",
+                juce::Rectangle<float> (plotArea.getRight() + 4.0f,
+                                         plotArea.getY() - 2.0f,
+                                         24.0f, 14.0f),
+                juce::Justification::centredLeft);
+}
+
 //==============================================================================
 //  HisstoryAudioProcessorEditor
 //==============================================================================
@@ -561,10 +803,32 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     addAndMakeVisible (adaptiveButton);
     adaptiveAttach = std::make_unique<ButtonAttach> (processor.apvts, "adaptive", adaptiveButton);
 
-    // ── Bypass button (next to Adaptive) ──────────────────────────────────────
+    // ── Bypass button ─────────────────────────────────────────────────────────
     bypassButton.setClickingTogglesState (true);
     addAndMakeVisible (bypassButton);
     bypassAttach = std::make_unique<ButtonAttach> (processor.apvts, "bypass", bypassButton);
+
+    // ── Spectrogram toggle ────────────────────────────────────────────────────
+    spectrogramToggle.setClickingTogglesState (true);
+    spectrogramToggle.onClick = [this]
+    {
+        spectrumDisplay.setSpectrogramMode (spectrogramToggle.getToggleState());
+    };
+    addAndMakeVisible (spectrogramToggle);
+
+    // ── Collapse toggle ───────────────────────────────────────────────────────
+    collapseButton.onClick = [this]
+    {
+        collapsed = ! collapsed;
+        collapseButton.setButtonText (collapsed ? ">>" : "<<");
+        spectrumDisplay.setVisible (! collapsed);
+
+        if (collapsed)
+            setSize (280, 500);
+        else
+            setSize (880, 500);
+    };
+    addAndMakeVisible (collapseButton);
 
     // ── Threshold slider ─────────────────────────────────────────────────────
     thresholdSlider.setSliderStyle (juce::Slider::LinearVertical);
@@ -614,17 +878,20 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     setupMetricNameLabel (metricHfRemovedName,    "HF Removed");
     setupMetricNameLabel (metricMidKeptName,      "Mid Preserved");
     setupMetricNameLabel (metricOutputName,       "Output Level");
-    setupMetricNameLabel (metricSelectivityName,  "Selectivity");
+    setupMetricNameLabel (metricHLRName,          "Harmonic Loss");
+    setupMetricNameLabel (metricFluxName,         "Residual Noise");
 
     setupMetricValueLabel (metricHfRemovedVal);
     setupMetricValueLabel (metricMidKeptVal);
     setupMetricValueLabel (metricOutputVal);
-    setupMetricValueLabel (metricSelectivityVal);
+    setupMetricValueLabel (metricHLRVal);
+    setupMetricValueLabel (metricFluxVal);
 
     addAndMakeVisible (metricHfRemovedName);     addAndMakeVisible (metricHfRemovedVal);
     addAndMakeVisible (metricMidKeptName);       addAndMakeVisible (metricMidKeptVal);
     addAndMakeVisible (metricOutputName);        addAndMakeVisible (metricOutputVal);
-    addAndMakeVisible (metricSelectivityName);   addAndMakeVisible (metricSelectivityVal);
+    addAndMakeVisible (metricHLRName);           addAndMakeVisible (metricHLRVal);
+    addAndMakeVisible (metricFluxName);          addAndMakeVisible (metricFluxVal);
 
     startTimerHz (30);
 }
@@ -641,16 +908,32 @@ void HisstoryAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds();
 
-    // ── Top control bar (compact) ────────────────────────────────────────────
+    // ── Top control bar ──────────────────────────────────────────────────────
     auto topBar = bounds.removeFromTop (36);
     topBar.reduce (12, 6);
 
-    adaptiveButton.setBounds (topBar.removeFromLeft (100).reduced (0, 2));
-    topBar.removeFromLeft (8);
-    bypassButton.setBounds (topBar.removeFromLeft (80).reduced (0, 2));
+    // Left side: collapse toggle + spectrogram toggle
+    collapseButton.setBounds (topBar.removeFromLeft (36).reduced (0, 2));
+    topBar.removeFromLeft (6);
+
+    if (! collapsed)
+    {
+        spectrogramToggle.setBounds (topBar.removeFromLeft (110).reduced (0, 2));
+        spectrogramToggle.setVisible (true);
+    }
+    else
+    {
+        spectrogramToggle.setVisible (false);
+    }
+
+    // Right side: Adaptive + Bypass
+    bypassButton.setBounds (topBar.removeFromRight (80).reduced (0, 2));
+    topBar.removeFromRight (8);
+    adaptiveButton.setBounds (topBar.removeFromRight (100).reduced (0, 2));
 
     // ── Right panel (sliders + metrics) ──────────────────────────────────────
-    auto rightPanel = bounds.removeFromRight (180);
+    const int panelW = collapsed ? bounds.getWidth() : 180;
+    auto rightPanel = collapsed ? bounds : bounds.removeFromRight (panelW);
     rightPanel.reduce (8, 4);
 
     // Slider columns
@@ -684,11 +967,15 @@ void HisstoryAudioProcessorEditor::resized()
     layoutMetricRow (metricHfRemovedName,    metricHfRemovedVal);
     layoutMetricRow (metricMidKeptName,      metricMidKeptVal);
     layoutMetricRow (metricOutputName,       metricOutputVal);
-    layoutMetricRow (metricSelectivityName,  metricSelectivityVal);
+    layoutMetricRow (metricHLRName,          metricHLRVal);
+    layoutMetricRow (metricFluxName,         metricFluxVal);
 
-    // ── Spectrum display (remaining space, no bottom margin) ─────────────────
-    bounds.reduce (8, 2);
-    spectrumDisplay.setBounds (bounds);
+    // ── Spectrum display (remaining space) ───────────────────────────────────
+    if (! collapsed)
+    {
+        bounds.reduce (8, 2);
+        spectrumDisplay.setBounds (bounds);
+    }
 }
 
 //==============================================================================
@@ -699,7 +986,9 @@ void HisstoryAudioProcessorEditor::paint (juce::Graphics& g)
     g.fillAll (background);
 
     // Draw a subtle separator line between sliders and metrics
-    auto rightPanel = getLocalBounds().removeFromRight (180);
+    const int panelW = collapsed ? getWidth() : 180;
+    auto rightPanel = getLocalBounds().removeFromRight (panelW);
+    rightPanel.removeFromTop (36);
     rightPanel.reduce (8, 4);
     int sepY = rightPanel.getY() + 220 + 2;
     g.setColour (gridLine);
@@ -784,33 +1073,45 @@ void HisstoryAudioProcessorEditor::updateMetrics()
     else
         metricOutputVal.setColour (juce::Label::textColourId, metricBad);
 
-    // ── Selectivity: ratio of HF removal to mid-band loss ───────────────
-    //  Measures how well the algorithm targets hiss vs. music.
-    //  Higher = better (removing hiss without affecting music).
-    const float absHf  = std::abs (smoothHfRemoved);
-    const float absMid = std::max (std::abs (smoothMidKept), 0.1f);
-    const float rawSel = absHf / absMid;
+    // ── Harmonic Loss Ratio ─────────────────────────────────────────────
+    //  Reads from the processor's atomic: output_HNR / input_HNR.
+    //  > 1.0 = harmonics preserved well relative to noise.
+    //  < 1.0 = harmonic content is being degraded.
+    {
+        const float rawHLR = processor.metricHarmonicLossRatio.load();
+        constexpr float hlrSmooth = 0.92f;
+        smoothHLR = hlrSmooth * smoothHLR + (1.0f - hlrSmooth) * rawHLR;
 
-    constexpr float selSmooth = 0.92f;
-    smoothSelectivity = selSmooth * smoothSelectivity + (1.0f - selSmooth) * rawSel;
+        metricHLRVal.setText (
+            juce::String (smoothHLR, 2) + "x", juce::dontSendNotification);
 
-    if (smoothSelectivity >= 100.0f)
-        metricSelectivityVal.setText ("99:1", juce::dontSendNotification);
-    else if (smoothSelectivity >= 10.0f)
-        metricSelectivityVal.setText (
-            juce::String (static_cast<int> (smoothSelectivity + 0.5f)) + ":1",
-            juce::dontSendNotification);
-    else
-        metricSelectivityVal.setText (
-            juce::String (smoothSelectivity, 1) + ":1",
-            juce::dontSendNotification);
+        if (smoothHLR >= 1.0f)
+            metricHLRVal.setColour (juce::Label::textColourId, metricGood);
+        else if (smoothHLR >= 0.7f)
+            metricHLRVal.setColour (juce::Label::textColourId, metricWarn);
+        else
+            metricHLRVal.setColour (juce::Label::textColourId, metricBad);
+    }
 
-    if (smoothSelectivity >= 8.0f)
-        metricSelectivityVal.setColour (juce::Label::textColourId, metricGood);
-    else if (smoothSelectivity >= 4.0f)
-        metricSelectivityVal.setColour (juce::Label::textColourId, metricWarn);
-    else
-        metricSelectivityVal.setColour (juce::Label::textColourId, metricBad);
+    // ── Residual Spectral Flux ───────────────────────────────────────────
+    //  Low flux = residual is noise-like (good).
+    //  High flux = residual contains structured / musical content (bad).
+    {
+        const float rawFlux = processor.metricResidualFlux.load();
+        constexpr float fluxSmooth = 0.92f;
+        smoothFlux = fluxSmooth * smoothFlux + (1.0f - fluxSmooth) * rawFlux;
+
+        const float pct = juce::jlimit (0.0f, 100.0f, smoothFlux * 100.0f);
+        metricFluxVal.setText (
+            juce::String (static_cast<int> (pct + 0.5f)) + "%", juce::dontSendNotification);
+
+        if (pct < 25.0f)
+            metricFluxVal.setColour (juce::Label::textColourId, metricGood);
+        else if (pct < 50.0f)
+            metricFluxVal.setColour (juce::Label::textColourId, metricWarn);
+        else
+            metricFluxVal.setColour (juce::Label::textColourId, metricBad);
+    }
 }
 
 //==============================================================================
