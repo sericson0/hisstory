@@ -20,7 +20,7 @@ HisstoryAudioProcessor::createParameterLayout()
     // ── Main controls ────────────────────────────────────────────────────────
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "threshold", 1 }, "Threshold",
-        juce::NormalisableRange<float> (-40.0f, 10.0f, 0.1f), -13.0f,
+        juce::NormalisableRange<float> (-40.0f, 10.0f, 0.1f), -20.0f,
         juce::AudioParameterFloatAttributes().withLabel ("dB")));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -142,6 +142,7 @@ void HisstoryAudioProcessor::resetAdaptiveProfile()
     runningMean.fill (0.0f);
     runningMeanSq.fill (0.0f);
     smoothedNoisePurity = 0.5f;
+    prevResidualMag.fill (0.0f);
 
     for (auto& ch : channels)
         ch.prevGain.fill (1.0f);
@@ -164,6 +165,9 @@ void HisstoryAudioProcessor::prepareToPlay (double sampleRate, int /*samplesPerB
     runningMean.fill (0.0f);
     runningMeanSq.fill (0.0f);
     smoothedNoisePurity = 0.5f;
+    smoothedHLR         = 1.0f;
+    smoothedResFlux     = 0.0f;
+    prevResidualMag.fill (0.0f);
 
     // ── Measure the actual FFT round-trip scaling on this platform ───────────
     //  JUCE's inverse FFT may or may not apply 1/N normalisation depending on
@@ -628,6 +632,10 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
     float noiseRemovedPower = 0.0f;
     float musicRemovedPower = 0.0f;
 
+    float inputTonalPower   = 0.0f, inputNonTonalPower   = 0.0f;
+    float outputTonalPower  = 0.0f, outputNonTonalPower  = 0.0f;
+    float residualFluxSum   = 0.0f, residualTotalMag     = 0.0f;
+
     for (int bin = 0; bin < numBins; ++bin)
     {
         const float prev = ch.prevGain[bin];
@@ -655,22 +663,41 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
             float outMag = std::sqrt (fftData[2 * bin] * fftData[2 * bin]
                                     + fftData[2 * bin + 1] * fftData[2 * bin + 1]);
             outputSpectrumDB[bin] = juce::Decibels::gainToDecibels (outMag, -150.0f);
-        }
 
-        // ── Noise Purity: classify removed energy as noise vs music ──────
-        if (updateSharedData && g < 0.999f)
-        {
-            const float removedPower = magsSq[bin] * (1.0f - g * g);
-            const float st = binStationarity[bin];
+            // ── Noise Purity: classify removed energy as noise vs music ──
+            if (g < 0.999f)
+            {
+                const float removedPower = magsSq[bin] * (1.0f - g * g);
+                const float st = binStationarity[bin];
 
-            noiseRemovedPower += removedPower * st;
-            musicRemovedPower += removedPower * (1.0f - st);
+                noiseRemovedPower += removedPower * st;
+                musicRemovedPower += removedPower * (1.0f - st);
+            }
+
+            // ── Harmonic Loss Ratio accumulators ─────────────────────────
+            if (isTonalPeak[bin])
+            {
+                inputTonalPower  += magsSq[bin];
+                outputTonalPower += magsSq[bin] * g * g;
+            }
+            else
+            {
+                inputNonTonalPower  += magsSq[bin];
+                outputNonTonalPower += magsSq[bin] * g * g;
+            }
+
+            // ── Residual Spectral Flux ───────────────────────────────────
+            const float resMag = mags[bin] * (1.0f - g);
+            residualFluxSum += std::abs (resMag - prevResidualMag[bin]);
+            residualTotalMag += resMag;
+            prevResidualMag[bin] = resMag;
         }
     }
 
-    // ── Update Noise Purity metric (smoothed) ────────────────────────────────
+    // ── Update metrics (smoothed) ────────────────────────────────────────────
     if (updateSharedData)
     {
+        // Noise Purity
         const float totalRemoved = noiseRemovedPower + musicRemovedPower;
         if (totalRemoved > 1e-20f)
         {
@@ -680,6 +707,23 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
                                 + (1.0f - puritySmooth) * purity;
         }
         metricNoisePurity.store (smoothedNoisePurity);
+
+        // Harmonic Loss Ratio: (output_HNR) / (input_HNR)
+        const float inputHNR  = (inputNonTonalPower  > 1e-20f)
+                              ? (inputTonalPower  / inputNonTonalPower)  : 1.0f;
+        const float outputHNR = (outputNonTonalPower > 1e-20f)
+                              ? (outputTonalPower / outputNonTonalPower) : 1.0f;
+        const float rawHLR = (inputHNR > 1e-20f) ? (outputHNR / inputHNR) : 1.0f;
+        constexpr float hlrSmooth = 0.95f;
+        smoothedHLR = hlrSmooth * smoothedHLR + (1.0f - hlrSmooth) * rawHLR;
+        metricHarmonicLossRatio.store (smoothedHLR);
+
+        // Residual Spectral Flux (normalised 0–1)
+        const float rawFlux = (residualTotalMag > 1e-20f)
+                            ? (residualFluxSum / residualTotalMag) : 0.0f;
+        constexpr float fluxSmooth = 0.95f;
+        smoothedResFlux = fluxSmooth * smoothedResFlux + (1.0f - fluxSmooth) * rawFlux;
+        metricResidualFlux.store (smoothedResFlux);
     }
 }
 

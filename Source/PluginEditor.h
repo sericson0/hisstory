@@ -42,6 +42,7 @@ namespace HisstoryColours
     const juce::Colour accent           { 0xffD96C30 };   // deep orange
     const juce::Colour accentBright     { 0xffF3A10F };   // golden orange
     const juce::Colour accentDim        { 0xff8B4420 };
+    const juce::Colour buttonSelected   { 0xffA34210 };
     const juce::Colour inactive         { 0xff5a5e70 };
     const juce::Colour sliderTrack      { 0xff2a2e3e };
     const juce::Colour buttonBg         { 0xff1e2230 };
@@ -93,6 +94,12 @@ public:
 
     void updateSpectrumData();
 
+    /** Toggle between spectrum analyser and spectrogram views. */
+    void setSpectrogramMode (bool enabled);
+    bool isSpectrogramMode() const { return showSpectrogram; }
+
+    juce::TextButton spectrogramToggle { "Spectrogram" };
+
     juce::Rectangle<float> plotArea;
 
 private:
@@ -120,6 +127,35 @@ private:
     static constexpr float maxFreq  = 22000.0f;
     static constexpr float minDB    = -100.0f;
     static constexpr float maxDB    = -20.0f;
+
+    // ── Spectrogram ──────────────────────────────────────────────────────────
+    bool showSpectrogram = false;
+
+    static constexpr int numMelBins   = 256;
+    static constexpr int numTimeCols  = 1024;
+
+    // Mel filterbank: for each Mel band, store (startBin, endBin) and weights
+    struct MelFilter { int startBin; int endBin; std::vector<float> weights; };
+    std::vector<MelFilter> melFilters;
+    void buildMelFilterbank();
+
+    // Circular buffer of Mel spectra (in dB)
+    std::array<std::array<float, numMelBins>, numTimeCols> spectrogramBuf {};
+    int spectrogramWritePos = 0;
+
+    // Back-buffer image for efficient rendering
+    juce::Image spectrogramImage;
+
+    void updateSpectrogramColumn();
+    void drawSpectrogram     (juce::Graphics&);
+    void drawMelGrid         (juce::Graphics&);
+
+    static float hzToMel (float hz)  { return 2595.0f * std::log10 (1.0f + hz / 700.0f); }
+    static float melToHz (float mel) { return 700.0f * (std::pow (10.0f, mel / 2595.0f) - 1.0f); }
+
+    juce::Colour dbToColour (float db) const;
+    float melToY (float mel) const;
+    float yToMel (float y)   const;
 };
 
 //==============================================================================
@@ -144,8 +180,11 @@ private:
 
     SpectrumDisplay spectrumDisplay;
 
-    juce::TextButton adaptiveButton { "Adaptive" };
-    juce::TextButton bypassButton   { "Bypass" };
+    juce::TextButton adaptiveButton      { "Adaptive" };
+    juce::TextButton bypassButton        { "Bypass" };
+    juce::TextButton collapseButton      { "<<" };
+
+    bool collapsed = false;
 
     juce::Slider thresholdSlider, reductionSlider;
     juce::Label  thresholdLabel, reductionLabel;
@@ -157,12 +196,14 @@ private:
     juce::Label metricHfRemovedName,    metricHfRemovedVal;
     juce::Label metricMidKeptName,      metricMidKeptVal;
     juce::Label metricOutputName,       metricOutputVal;
-    juce::Label metricSelectivityName,  metricSelectivityVal;
+    juce::Label metricHLRName,          metricHLRVal;
+
+    juce::Label brandLabel;
 
     float smoothHfRemoved    = 0.0f;
     float smoothMidKept      = 0.0f;
     float smoothOutput       = 0.0f;
-    float smoothSelectivity  = 0.0f;
+    float smoothHLR          = 1.0f;
 
     using SliderAttach = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttach = juce::AudioProcessorValueTreeState::ButtonAttachment;

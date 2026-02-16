@@ -78,6 +78,14 @@ public:
         0.0 = all removed content was music. */
     std::atomic<float> metricNoisePurity { 0.0f };
 
+    /** Harmonic Loss Ratio: output_HNR / input_HNR.
+        > 1.0 = harmonics preserved relative to noise; < 1.0 = harmonics degraded. */
+    std::atomic<float> metricHarmonicLossRatio { 1.0f };
+
+    /** Residual Spectral Flux: normalised frame-to-frame change of the
+        residual (removed) spectrum.  Low = noise-like (good), high = musical (bad). */
+    std::atomic<float> metricResidualFlux { 0.0f };
+
     /** STFT normalisation factor – public so the test harness can inspect it. */
     float windowCorrection = 2.0f / 3.0f;
 
@@ -139,6 +147,9 @@ private:
     std::array<float, numBins>  runningMean   {};
     std::array<float, numBins>  runningMeanSq {};
     float smoothedNoisePurity = 0.5f;
+    float smoothedHLR         = 1.0f;
+    float smoothedResFlux     = 0.0f;
+    std::array<float, numBins>  prevResidualMag {};
 
     /** Generate a synthetic hiss-shaped default profile so the plugin
         works immediately (before the user presses Learn). */
