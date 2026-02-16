@@ -291,7 +291,7 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             if (--state.samplesUntilHop == 0)
             {
                 state.samplesUntilHop = hopSize;
-                processSTFTFrame (state, ch == 0);
+                processSTFTFrame (state, ch == 0, numCh);
             }
 
             // ── Hard safety: catch catastrophic gain only ─────────────────
@@ -319,7 +319,8 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 //  processSTFTFrame
 //==============================================================================
 void HisstoryAudioProcessor::processSTFTFrame (ChannelState& ch,
-                                                bool updateSharedData)
+                                                bool updateSharedData,
+                                                int numActiveChannels)
 {
     alignas(16) float fftData[fftSize * 2] {};
     for (int i = 0; i < fftSize; ++i)
@@ -328,7 +329,7 @@ void HisstoryAudioProcessor::processSTFTFrame (ChannelState& ch,
     hannWindow.multiplyWithWindowingTable (fftData, static_cast<size_t> (fftSize));
     forwardFFT.performRealOnlyForwardTransform (fftData, true);
 
-    processSpectrum (fftData, ch, updateSharedData);
+    processSpectrum (fftData, ch, updateSharedData, numActiveChannels);
 
     forwardFFT.performRealOnlyInverseTransform (fftData);
     hannWindow.multiplyWithWindowingTable (fftData, static_cast<size_t> (fftSize));
@@ -345,67 +346,107 @@ void HisstoryAudioProcessor::processSTFTFrame (ChannelState& ch,
 //==============================================================================
 void HisstoryAudioProcessor::processSpectrum (float* fftData,
                                                ChannelState& ch,
-                                               bool updateSharedData)
+                                               bool updateSharedData,
+                                               int numActiveChannels)
 {
     // ── Parameters ───────────────────────────────────────────────────────────
     const float reductionDB   = pReduction->load();
-    const float reductionGain = juce::Decibels::decibelsToGain (-reductionDB);
     const float smoothPct     = pSmoothing->load() / 100.0f;
     const bool  isAdaptive    = pAdaptive->load() > 0.5f;
 
-    constexpr float transitionWidth = 2.5f;
     const float spectralFloor = juce::Decibels::decibelsToGain (-80.0f);
 
-    // ── Per-bin gain computation ─────────────────────────────────────────────
+    // Oversubtraction factor: higher = more aggressive noise removal.
+    // Scales with the reduction knob (0-40 dB mapped to alpha 2.0-8.0).
+    const float alpha = 2.0f + (reductionDB / 40.0f) * 6.0f;
+
+    // Frequency-dependent noise bias: the min-follower tracks the minimum
+    // of Rayleigh-distributed FFT magnitudes.  We use a lower bias in the
+    // mid range (where signal lives) to preserve clarity, and a higher
+    // bias in the HF range (where hiss lives) for stronger noise removal.
+    const float sr   = currentSampleRate.load();
+    const float binHz = sr / static_cast<float> (fftSize);
+
+    // ── Compute magnitudes and update noise tracker ────────────────────────
+    std::array<float, numBins> mags;
+    std::array<float, numBins> magsSq;
+
+    for (int bin = 0; bin < numBins; ++bin)
+    {
+        const float re = fftData[2 * bin];
+        const float im = fftData[2 * bin + 1];
+        magsSq[bin] = re * re + im * im;
+        mags[bin]   = std::sqrt (magsSq[bin]);
+
+        if (updateSharedData)
+            inputSpectrumDB[bin] = juce::Decibels::gainToDecibels (mags[bin], -150.0f);
+
+        // Adaptive noise floor tracker (min-follower)
+        // Runs on ALL channels for a more stable noise estimate.
+        if (isAdaptive)
+        {
+            if (mags[bin] < noiseProfile[bin])
+            {
+                // Scale attack by 1/numChannels so each channel
+                // contributes proportionally to the estimate
+                const float floorAttack = 0.06f / numActiveChannels;
+                noiseProfile[bin] += floorAttack * (mags[bin] - noiseProfile[bin]);
+            }
+            else
+            {
+                noiseProfile[bin] *= (1.0f + 0.001f / numActiveChannels);
+            }
+            if (updateSharedData)
+                noiseProfileDisplay[bin] = noiseProfile[bin];
+        }
+    }
+
+    // ── Tonal peak detection (protect strong harmonics from over-gating) ──
+    //  Only protect bins that are prominent tonal peaks (at least 10 dB above
+    //  their neighbors).  This prevents artifacts on strong harmonics while
+    //  still allowing broadband noise gating everywhere else.
+    std::array<bool, numBins> isTonalPeak {};
+    for (int bin = 3; bin < numBins - 3; ++bin)
+    {
+        float neighborAvg = (magsSq[bin - 2] + magsSq[bin - 1]
+                           + magsSq[bin + 1] + magsSq[bin + 2]) * 0.25f;
+        // 10 dB above neighbors in power = 10x power ratio
+        if (magsSq[bin] > neighborAvg * 10.0f)
+            isTonalPeak[bin] = true;
+    }
+
+    // ── Per-bin gain computation (Wiener-style spectral subtraction) ──────
     std::array<float, numBins> gains;
 
     for (int bin = 0; bin < numBins; ++bin)
     {
-        const float re  = fftData[2 * bin];
-        const float im  = fftData[2 * bin + 1];
-        const float mag = std::sqrt (re * re + im * im);
+        const float freq = static_cast<float> (bin) * binHz;
 
-        if (updateSharedData)
-            inputSpectrumDB[bin] = juce::Decibels::gainToDecibels (mag, -150.0f);
+        // Frequency-dependent noise bias:
+        //   Below 2 kHz: bias = 1.2 (conservative, preserve signal)
+        //   2-4 kHz: ramp from 1.2 to 2.5
+        //   Above 4 kHz: bias = 2.5 (aggressive, target hiss)
+        float noiseBias;
+        if (freq < 2000.0f)
+            noiseBias = 1.2f;
+        else if (freq < 4000.0f)
+            noiseBias = 1.2f + 1.3f * ((freq - 2000.0f) / 2000.0f);
+        else
+            noiseBias = 2.5f;
 
         const float noiseEst   = noiseProfile[bin];
         const float thrMult    = perBinThreshold[bin];
-        const float noiseLevel = noiseEst * thrMult;
-
-        // ── Adaptive noise floor tracker (min-follower) ──────────────────────
-        //  Fast attack (quickly drops to match noise floor) +
-        //  very slow release (barely drifts up during loud passages).
-        //  This continuously tracks the actual noise floor without needing
-        //  a separate "Learn" step.
-        if (isAdaptive && updateSharedData)
-        {
-            if (mag < noiseProfile[bin])
-            {
-                // Fast attack – quickly follow noise floor downward.
-                // Converges within ~60 frames (≈ 0.7 s at 44.1 kHz / hop 512).
-                constexpr float floorAttack = 0.12f;
-                noiseProfile[bin] += floorAttack * (mag - noiseProfile[bin]);
-            }
-            else
-            {
-                // Very slow release – barely drift upward during loud sections.
-                // Doubling time ≈ 2300 frames ≈ 27 s at 44.1 kHz / hop 512.
-                noiseProfile[bin] *= 1.0003f;
-            }
-            noiseProfileDisplay[bin] = noiseProfile[bin];
-        }
+        const float noiseLevel = noiseEst * thrMult * noiseBias;
 
         float gain = 1.0f;
 
-        if (noiseLevel > 1e-10f)
+        if (magsSq[bin] > 1e-20f)
         {
-            const float ratio = mag / noiseLevel;
-
-            float t = juce::jlimit (0.0f, 1.0f,
-                                    (ratio - 1.0f) / transitionWidth);
-            t = t * t * (3.0f - 2.0f * t);   // Hermite smoothstep
-
-            gain = reductionGain + (1.0f - reductionGain) * t;
+            const float noiseSq = noiseLevel * noiseLevel;
+            // Use lower alpha for tonal peaks to preserve harmonics
+            const float binAlpha = isTonalPeak[bin] ? (alpha * 0.3f) : alpha;
+            const float subtracted = 1.0f - binAlpha * (noiseSq / magsSq[bin]);
+            gain = std::sqrt (std::max (0.0f, subtracted));
         }
 
         gain = juce::jlimit (spectralFloor, 1.0f, gain);
@@ -446,11 +487,28 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
         gains = s;
     }
 
-    // ── Temporal smoothing & apply gains (positive-frequency bins only) ──────
+    // ── Asymmetric temporal smoothing & apply gains ─────────────────────────
+    //  Fast attack (let signal through quickly when gain increases) +
+    //  slow release (smooth noise removal to suppress musical noise).
+    //  The smoothing parameter controls the release time.
     for (int bin = 0; bin < numBins; ++bin)
     {
-        float g = smoothPct * ch.prevGain[bin]
-                + (1.0f - smoothPct) * gains[bin];
+        const float prev = ch.prevGain[bin];
+        float g;
+
+        if (gains[bin] > prev)
+        {
+            // Attack: gain is increasing (signal onset) – react quickly
+            constexpr float attackCoeff = 0.15f;
+            g = prev + attackCoeff * (gains[bin] - prev);
+        }
+        else
+        {
+            // Release: gain is decreasing (signal offset) – smooth slowly
+            // to avoid musical noise artifacts during decays
+            const float releaseCoeff = smoothPct;
+            g = prev + (1.0f - releaseCoeff) * (gains[bin] - prev);
+        }
 
         g = juce::jlimit (spectralFloor, 1.0f, g);
         ch.prevGain[bin] = g;

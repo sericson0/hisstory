@@ -26,3 +26,6 @@ Thumbs.db
 
 # Example tracks (large audio files)
 example_track/
+
+# Benchmark output (generated WAV files)
+benchmark_output/
