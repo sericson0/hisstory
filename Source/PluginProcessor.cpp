@@ -300,9 +300,7 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 {
     juce::ScopedNoDenormals noDenormals;
 
-    if (pBypass->load() > 0.5f)
-        return;
-
+    const bool bypassed = pBypass->load() > 0.5f;
     const bool currentAdaptive = pAdaptive->load() > 0.5f;
 
     // ── Detect adaptive mode transitions ─────────────────────────────────────
@@ -349,22 +347,30 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             if (--state.samplesUntilHop == 0)
             {
                 state.samplesUntilHop = hopSize;
-                processSTFTFrame (state, ch == 0, numCh);
+                processSTFTFrame (state, ch == 0, numCh, bypassed);
             }
 
-            // ── Hard safety: catch catastrophic gain only ─────────────────
-            const float absOut = std::abs (output);
-            const float absIn  = std::abs (delayedInput);
-
-            if (absOut > absIn * 4.0f)
+            // ── Bypass: output the dry input, STFT still runs for display ──
+            if (bypassed)
             {
-                if (absIn > 1e-8f)
-                    output *= absIn / absOut;
-                else
-                    output = 0.0f;
+                data[i] = inputSample;
             }
+            else
+            {
+                // ── Hard safety: catch catastrophic gain only ─────────────
+                const float absOut = std::abs (output);
+                const float absIn  = std::abs (delayedInput);
 
-            data[i] = output;
+                if (absOut > absIn * 4.0f)
+                {
+                    if (absIn > 1e-8f)
+                        output *= absIn / absOut;
+                    else
+                        output = 0.0f;
+                }
+
+                data[i] = output;
+            }
         }
     }
 
@@ -406,7 +412,8 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 //==============================================================================
 void HisstoryAudioProcessor::processSTFTFrame (ChannelState& ch,
                                                 bool updateSharedData,
-                                                int numActiveChannels)
+                                                int numActiveChannels,
+                                                bool bypassed)
 {
     alignas(16) float fftData[fftSize * 2] {};
     for (int i = 0; i < fftSize; ++i)
@@ -415,7 +422,7 @@ void HisstoryAudioProcessor::processSTFTFrame (ChannelState& ch,
     hannWindow.multiplyWithWindowingTable (fftData, static_cast<size_t> (fftSize));
     forwardFFT.performRealOnlyForwardTransform (fftData, true);
 
-    processSpectrum (fftData, ch, updateSharedData, numActiveChannels);
+    processSpectrum (fftData, ch, updateSharedData, numActiveChannels, bypassed);
 
     forwardFFT.performRealOnlyInverseTransform (fftData);
     hannWindow.multiplyWithWindowingTable (fftData, static_cast<size_t> (fftSize));
@@ -433,7 +440,8 @@ void HisstoryAudioProcessor::processSTFTFrame (ChannelState& ch,
 void HisstoryAudioProcessor::processSpectrum (float* fftData,
                                                ChannelState& ch,
                                                bool updateSharedData,
-                                               int numActiveChannels)
+                                               int numActiveChannels,
+                                               bool bypassed)
 {
     // ── Parameters ───────────────────────────────────────────────────────────
     const float reductionDB   = pReduction->load();
@@ -514,6 +522,17 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
             if (updateSharedData)
                 noiseProfileDisplay[bin] = noiseProfile[bin];
         }
+    }
+
+    // ── Bypass: update display with input spectrum only, skip processing ──
+    if (bypassed)
+    {
+        if (updateSharedData)
+        {
+            for (int bin = 0; bin < numBins; ++bin)
+                outputSpectrumDB[bin] = inputSpectrumDB[bin];
+        }
+        return;
     }
 
     // ── Tonal peak detection (protect harmonics from over-gating) ─────────
@@ -708,14 +727,13 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
         }
         metricNoisePurity.store (smoothedNoisePurity);
 
-        // Harmonic Loss Ratio: (output_HNR) / (input_HNR)
-        const float inputHNR  = (inputNonTonalPower  > 1e-20f)
-                              ? (inputTonalPower  / inputNonTonalPower)  : 1.0f;
-        const float outputHNR = (outputNonTonalPower > 1e-20f)
-                              ? (outputTonalPower / outputNonTonalPower) : 1.0f;
-        const float rawHLR = (inputHNR > 1e-20f) ? (outputHNR / inputHNR) : 1.0f;
+        // Harmonic Loss: fraction of tonal energy removed by the de-hisser.
+        // 0.0 = no tonal energy lost; 0.05 = 5% lost; higher = more loss.
+        const float rawHarmLoss = (inputTonalPower > 1e-20f)
+                                ? (1.0f - outputTonalPower / inputTonalPower)
+                                : 0.0f;
         constexpr float hlrSmooth = 0.95f;
-        smoothedHLR = hlrSmooth * smoothedHLR + (1.0f - hlrSmooth) * rawHLR;
+        smoothedHLR = hlrSmooth * smoothedHLR + (1.0f - hlrSmooth) * rawHarmLoss;
         metricHarmonicLossRatio.store (smoothedHLR);
 
         // Residual Spectral Flux (normalised 0–1)

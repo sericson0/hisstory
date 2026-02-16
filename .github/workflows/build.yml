@@ -8,6 +8,29 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake (Universal Binary)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --config Release --target HisstoryVST_VST3 HisstoryVST_Standalone
+
+      - name: Upload macOS VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hisstory-macOS-VST3
+          path: build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3/
+
+      - name: Upload macOS Standalone
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hisstory-macOS-Standalone
+          path: build/HisstoryVST_artefacts/Release/Standalone/Hisstory.app/
+
   build-windows:
     runs-on: windows-latest
     steps:
@@ -30,29 +53,3 @@ jobs:
         with:
           name: Hisstory-Windows-Standalone
           path: build/HisstoryVST_artefacts/Release/Standalone/Hisstory.exe
-
-  build-macos:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Select Xcode 15.4
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
-
-      - name: Configure CMake (Universal Binary)
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
-
-      - name: Build
-        run: cmake --build build --config Release --target HisstoryVST_VST3 HisstoryVST_Standalone
-
-      - name: Upload macOS VST3
-        uses: actions/upload-artifact@v4
-        with:
-          name: Hisstory-macOS-VST3
-          path: build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3/
-
-      - name: Upload macOS Standalone
-        uses: actions/upload-artifact@v4
-        with:
-          name: Hisstory-macOS-Standalone
-          path: build/HisstoryVST_artefacts/Release/Standalone/Hisstory.app/

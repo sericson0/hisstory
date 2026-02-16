@@ -7,6 +7,7 @@
 */
 
 #include "PluginEditor.h"
+#include "BinaryData.h"
 
 using namespace HisstoryColours;
 using namespace HisstoryConstants;
@@ -143,8 +144,8 @@ void SpectrumDisplay::resized()
                   .withTrimmedTop    (22.0f)
                   .withTrimmedRight  (44.0f);
 
-    // Position the spectrogram toggle button after the legend area (top-right of legend row)
-    float btnX = plotArea.getX() + 210.0f;
+    // Position the spectrogram toggle on the far left of the legend row
+    float btnX = plotArea.getX();
     float btnY = plotArea.getY() - 20.0f;
     spectrogramToggle.setBounds (static_cast<int> (btnX), static_cast<int> (btnY), 90, 18);
 }
@@ -232,7 +233,8 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 void SpectrumDisplay::drawLegend (juce::Graphics& g)
 {
     float legendY = plotArea.getY() - 16.0f;
-    float legendX = plotArea.getX() + 6.0f;
+    // Anchor legend to the far right of the plot area
+    float legendX = plotArea.getRight() - 200.0f;
     g.setFont (11.0f);
 
     // Input
@@ -932,12 +934,11 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     addAndMakeVisible (metricOutputName);        addAndMakeVisible (metricOutputVal);
     addAndMakeVisible (metricHLRName);           addAndMakeVisible (metricHLRVal);
 
-    // ── Brand label ──────────────────────────────────────────────────────────
-    brandLabel.setText ("Hisstory", juce::dontSendNotification);
-    brandLabel.setJustificationType (juce::Justification::centred);
-    brandLabel.setFont (juce::Font (18.0f).boldened());
-    brandLabel.setColour (juce::Label::textColourId, buttonSelected);
-    addAndMakeVisible (brandLabel);
+    // ── Brand logo ──────────────────────────────────────────────────────────
+    auto logoImage = juce::ImageCache::getFromMemory (
+        BinaryData::Logo_png, BinaryData::Logo_pngSize);
+    brandLogo.setImage (logoImage, juce::RectanglePlacement::centred);
+    addAndMakeVisible (brandLogo);
 
     startTimerHz (30);
 }
@@ -1003,9 +1004,10 @@ void HisstoryAudioProcessorEditor::resized()
     layoutMetricRow (metricOutputName,       metricOutputVal);
     layoutMetricRow (metricHLRName,          metricHLRVal);
 
-    // ── Brand label below metrics ────────────────────────────────────────────
-    rightPanel.removeFromTop (12);
-    brandLabel.setBounds (rightPanel.removeFromTop (24));
+    // ── Brand logo below metrics ─────────────────────────────────────────────
+    rightPanel.removeFromTop (8);
+    brandLogo.setBounds (rightPanel.removeFromTop (
+        std::min (rightPanel.getHeight(), 100)));
 
     // ── Spectrum display (remaining space) ───────────────────────────────────
     if (! collapsed)
@@ -1110,25 +1112,25 @@ void HisstoryAudioProcessorEditor::updateMetrics()
     else
         metricOutputVal.setColour (juce::Label::textColourId, metricBad);
 
-    // ── Harmonic Loss Ratio ─────────────────────────────────────────────
-    //  Reads from the processor's atomic: output_HNR / input_HNR.
-    //  Values near 1.0 = harmonics fully preserved.
-    //  > 1.03 = orange (mild harmonic emphasis), > 1.1 = red (significant).
-    //  < 1.0 = green (harmonics preserved well, noise removed).
+    // ── Harmonic Loss (percentage) ──────────────────────────────────────
+    //  Reads from the processor's atomic: fraction (0–1) of tonal energy
+    //  removed.  Displayed as percentage.  0% = perfect preservation.
     {
-        const float rawHLR = processor.metricHarmonicLossRatio.load();
+        const float rawLoss = processor.metricHarmonicLossRatio.load();
         constexpr float hlrSmooth = 0.92f;
-        smoothHLR = hlrSmooth * smoothHLR + (1.0f - hlrSmooth) * rawHLR;
+        smoothHLR = hlrSmooth * smoothHLR + (1.0f - hlrSmooth) * rawLoss;
+
+        float lossPct = smoothHLR * 100.0f;
 
         metricHLRVal.setText (
-            juce::String (smoothHLR, 3) + "x", juce::dontSendNotification);
+            juce::String (lossPct, 1) + "%", juce::dontSendNotification);
 
-        if (smoothHLR > 1.1f)
-            metricHLRVal.setColour (juce::Label::textColourId, metricBad);
-        else if (smoothHLR > 1.03f)
+        if (lossPct < 3.0f)
+            metricHLRVal.setColour (juce::Label::textColourId, metricGood);
+        else if (lossPct < 10.0f)
             metricHLRVal.setColour (juce::Label::textColourId, metricWarn);
         else
-            metricHLRVal.setColour (juce::Label::textColourId, metricGood);
+            metricHLRVal.setColour (juce::Label::textColourId, metricBad);
     }
 }
 

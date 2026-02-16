@@ -78,9 +78,9 @@ public:
         0.0 = all removed content was music. */
     std::atomic<float> metricNoisePurity { 0.0f };
 
-    /** Harmonic Loss Ratio: output_HNR / input_HNR.
-        > 1.0 = harmonics preserved relative to noise; < 1.0 = harmonics degraded. */
-    std::atomic<float> metricHarmonicLossRatio { 1.0f };
+    /** Harmonic Loss: fraction (0–1) of tonal energy removed by the de-hisser.
+        0.0 = no loss (perfect preservation); higher = more loss. */
+    std::atomic<float> metricHarmonicLossRatio { 0.0f };
 
     /** Residual Spectral Flux: normalised frame-to-frame change of the
         residual (removed) spectrum.  Low = noise-like (good), high = musical (bad). */
@@ -147,7 +147,7 @@ private:
     std::array<float, numBins>  runningMean   {};
     std::array<float, numBins>  runningMeanSq {};
     float smoothedNoisePurity = 0.5f;
-    float smoothedHLR         = 1.0f;
+    float smoothedHLR         = 0.0f;
     float smoothedResFlux     = 0.0f;
     std::array<float, numBins>  prevResidualMag {};
 
@@ -174,8 +174,8 @@ private:
     //==========================================================================
     //  Internal helpers
     //==========================================================================
-    void  processSTFTFrame   (ChannelState& ch, bool updateSharedData, int numActiveChannels = 1);
-    void  processSpectrum    (float* fftData, ChannelState& ch, bool updateSharedData, int numActiveChannels = 1);
+    void  processSTFTFrame   (ChannelState& ch, bool updateSharedData, int numActiveChannels = 1, bool bypassed = false);
+    void  processSpectrum    (float* fftData, ChannelState& ch, bool updateSharedData, int numActiveChannels = 1, bool bypassed = false);
     void  updatePerBinThreshold();
 
     //==========================================================================
