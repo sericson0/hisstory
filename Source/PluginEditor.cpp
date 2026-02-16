@@ -935,10 +935,8 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     addAndMakeVisible (metricHLRName);           addAndMakeVisible (metricHLRVal);
 
     // ── Brand logo ──────────────────────────────────────────────────────────
-    auto logoImage = juce::ImageCache::getFromMemory (
+    brandLogoImage = juce::ImageCache::getFromMemory (
         BinaryData::Logo_png, BinaryData::Logo_pngSize);
-    brandLogo.setImage (logoImage, juce::RectanglePlacement::centred);
-    addAndMakeVisible (brandLogo);
 
     startTimerHz (30);
 }
@@ -1006,8 +1004,8 @@ void HisstoryAudioProcessorEditor::resized()
 
     // ── Brand logo below metrics ─────────────────────────────────────────────
     rightPanel.removeFromTop (8);
-    brandLogo.setBounds (rightPanel.removeFromTop (
-        std::min (rightPanel.getHeight(), 100)));
+    brandLogoBounds = rightPanel.removeFromTop (
+        std::min (rightPanel.getHeight(), 100));
 
     // ── Spectrum display (remaining space) ───────────────────────────────────
     if (! collapsed)
@@ -1033,6 +1031,33 @@ void HisstoryAudioProcessorEditor::paint (juce::Graphics& g)
     g.setColour (gridLine);
     g.drawHorizontalLine (sepY, (float)(rightPanel.getX() + 8),
                           (float)(rightPanel.getRight() - 8));
+
+    // ── Draw brand logo with high-quality resampling ─────────────────────────
+    if (brandLogoImage.isValid() && ! brandLogoBounds.isEmpty())
+    {
+        auto dest = brandLogoBounds.toFloat();
+
+        float imgAspect = static_cast<float> (brandLogoImage.getWidth())
+                        / static_cast<float> (brandLogoImage.getHeight());
+        float destAspect = dest.getWidth() / dest.getHeight();
+
+        juce::Rectangle<float> drawArea;
+        if (imgAspect > destAspect)
+        {
+            float h = dest.getWidth() / imgAspect;
+            drawArea = { dest.getX(), dest.getCentreY() - h * 0.5f,
+                         dest.getWidth(), h };
+        }
+        else
+        {
+            float w = dest.getHeight() * imgAspect;
+            drawArea = { dest.getCentreX() - w * 0.5f, dest.getY(),
+                         w, dest.getHeight() };
+        }
+
+        g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+        g.drawImage (brandLogoImage, drawArea);
+    }
 }
 
 //==============================================================================

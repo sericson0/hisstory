@@ -198,7 +198,8 @@ private:
     juce::Label metricOutputName,       metricOutputVal;
     juce::Label metricHLRName,          metricHLRVal;
 
-    juce::ImageComponent brandLogo;
+    juce::Image brandLogoImage;
+    juce::Rectangle<int> brandLogoBounds;
 
     float smoothHfRemoved    = 0.0f;
     float smoothMidKept      = 0.0f;
