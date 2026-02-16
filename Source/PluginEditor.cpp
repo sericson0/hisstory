@@ -129,6 +129,10 @@ SpectrumDisplay::SpectrumDisplay (HisstoryAudioProcessor& p) : processor (p)
         col.fill (minDB);
 
     buildMelFilterbank();
+
+    spectrogramToggle.setClickingTogglesState (true);
+    spectrogramToggle.onClick = [this] { setSpectrogramMode (spectrogramToggle.getToggleState()); };
+    addAndMakeVisible (spectrogramToggle);
 }
 
 void SpectrumDisplay::resized()
@@ -136,8 +140,13 @@ void SpectrumDisplay::resized()
     plotArea = getLocalBounds().toFloat()
                   .withTrimmedLeft   (8.0f)
                   .withTrimmedBottom (22.0f)
-                  .withTrimmedTop    (22.0f)    // room for legend inside
+                  .withTrimmedTop    (22.0f)
                   .withTrimmedRight  (44.0f);
+
+    // Position the spectrogram toggle button after the legend area (top-right of legend row)
+    float btnX = plotArea.getX() + 210.0f;
+    float btnY = plotArea.getY() - 20.0f;
+    spectrogramToggle.setBounds (static_cast<int> (btnX), static_cast<int> (btnY), 90, 18);
 }
 
 // ── Coordinate mapping ──────────────────────────────────────────────────────
@@ -278,33 +287,39 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
                     juce::Justification::centred);
     }
 
-    // "Hz" label
+    // "Hz" label -- placed after the rightmost frequency label with gap
     g.setColour (gridText);
     g.drawText ("Hz",
-                juce::Rectangle<float> (plotArea.getRight() - 16.0f,
+                juce::Rectangle<float> (plotArea.getRight() + 4.0f,
                                          plotArea.getBottom() + 3.0f,
                                          24.0f, 16.0f),
-                juce::Justification::centred);
+                juce::Justification::centredLeft);
 
-    // dB lines: from -20 dB down to -100 dB
+    // dB lines: from -20 dB down to -100 dB (skip the top-most to avoid overlap with "dB" label)
     for (float db = maxDB; db >= minDB; db -= 10.0f)
     {
         float y = dbToY (db);
         g.setColour (gridLine);
         g.drawHorizontalLine (static_cast<int> (y),
                               plotArea.getX(), plotArea.getRight());
-        g.setColour (gridText);
-        g.drawText (juce::String (static_cast<int> (db)),
-                    juce::Rectangle<float> (plotArea.getRight() + 4.0f,
-                                             y - 7.0f, 36.0f, 14.0f),
-                    juce::Justification::centredLeft);
+
+        // Skip the top label (-20 dB) so it doesn't overlap with the "dB" unit label
+        if (db < maxDB - 1.0f)
+        {
+            g.setColour (gridText);
+            g.drawText (juce::String (static_cast<int> (db)),
+                        juce::Rectangle<float> (plotArea.getRight() + 4.0f,
+                                                 y - 7.0f, 36.0f, 14.0f),
+                        juce::Justification::centredLeft);
+        }
     }
 
-    // "dB" label at top-right
-    g.drawText ("dB",
+    // "dB" label at top-right (with the top dB value shown inline)
+    g.setColour (gridText);
+    g.drawText (juce::String (static_cast<int> (maxDB)) + " dB",
                 juce::Rectangle<float> (plotArea.getRight() + 4.0f,
-                                         plotArea.getY() - 2.0f,
-                                         24.0f, 14.0f),
+                                         plotArea.getY() - 7.0f,
+                                         36.0f, 14.0f),
                 juce::Justification::centredLeft);
 }
 
@@ -640,26 +655,31 @@ juce::Colour SpectrumDisplay::dbToColour (float db) const
 {
     float t = juce::jlimit (0.0f, 1.0f, (db - minDB) / (maxDB - minDB));
 
-    // Perceptual colourmap: dark blue → cyan → yellow → red → white
-    if (t < 0.25f)
+    // Orange-themed colourmap: black → dark brown → #A34210 → golden orange → white
+    if (t < 0.2f)
     {
-        float s = t / 0.25f;
-        return juce::Colour::fromFloatRGBA (0.0f, s * 0.3f, 0.15f + s * 0.55f, 1.0f);
+        float s = t / 0.2f;
+        return juce::Colour::fromFloatRGBA (s * 0.12f, s * 0.06f, s * 0.02f, 1.0f);
     }
-    else if (t < 0.5f)
+    else if (t < 0.45f)
     {
-        float s = (t - 0.25f) / 0.25f;
-        return juce::Colour::fromFloatRGBA (s * 0.2f, 0.3f + s * 0.7f, 0.7f - s * 0.2f, 1.0f);
+        float s = (t - 0.2f) / 0.25f;
+        return juce::Colour::fromFloatRGBA (0.12f + s * 0.52f, 0.06f + s * 0.20f, 0.02f + s * 0.04f, 1.0f);
     }
-    else if (t < 0.75f)
+    else if (t < 0.7f)
     {
-        float s = (t - 0.5f) / 0.25f;
-        return juce::Colour::fromFloatRGBA (0.2f + s * 0.8f, 1.0f - s * 0.2f, 0.5f - s * 0.5f, 1.0f);
+        float s = (t - 0.45f) / 0.25f;
+        return juce::Colour::fromFloatRGBA (0.64f + s * 0.31f, 0.26f + s * 0.37f, 0.06f + s * 0.0f, 1.0f);
+    }
+    else if (t < 0.9f)
+    {
+        float s = (t - 0.7f) / 0.2f;
+        return juce::Colour::fromFloatRGBA (0.95f + s * 0.05f, 0.63f + s * 0.27f, 0.06f + s * 0.24f, 1.0f);
     }
     else
     {
-        float s = (t - 0.75f) / 0.25f;
-        return juce::Colour::fromFloatRGBA (1.0f, 0.8f * (1.0f - s) + s, s, 1.0f);
+        float s = (t - 0.9f) / 0.1f;
+        return juce::Colour::fromFloatRGBA (1.0f, 0.9f + s * 0.1f, 0.3f + s * 0.7f, 1.0f);
     }
 }
 
@@ -742,6 +762,20 @@ void SpectrumDisplay::drawMelGrid (juce::Graphics& g)
     const float freqLines[] = { 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
     const char* freqLabels[] = { "100", "200", "500", "1k", "2k", "5k", "10k", "20k" };
 
+    // Find the topmost visible label to skip it (avoid overlapping with "Hz" unit label)
+    float topMostY = 1e6f;
+    int topMostIdx = -1;
+    for (int i = 0; i < 8; ++i)
+    {
+        float mel = hzToMel (freqLines[i]);
+        float y = melToY (mel);
+        if (y >= plotArea.getY() && y <= plotArea.getBottom() && y < topMostY)
+        {
+            topMostY = y;
+            topMostIdx = i;
+        }
+    }
+
     for (int i = 0; i < 8; ++i)
     {
         float mel = hzToMel (freqLines[i]);
@@ -752,19 +786,35 @@ void SpectrumDisplay::drawMelGrid (juce::Graphics& g)
         g.drawHorizontalLine (static_cast<int> (y),
                               plotArea.getX(), plotArea.getRight());
 
-        g.setColour (HisstoryColours::gridText);
-        g.drawText (freqLabels[i],
-                    juce::Rectangle<float> (plotArea.getRight() + 4.0f,
-                                             y - 7.0f, 36.0f, 14.0f),
-                    juce::Justification::centredLeft);
+        // Skip the topmost label to avoid overlapping with the "Hz" unit label
+        if (i != topMostIdx)
+        {
+            g.setColour (HisstoryColours::gridText);
+            g.drawText (freqLabels[i],
+                        juce::Rectangle<float> (plotArea.getRight() + 4.0f,
+                                                 y - 7.0f, 36.0f, 14.0f),
+                        juce::Justification::centredLeft);
+        }
     }
 
+    // Top-right: show the topmost frequency and "Hz" together
     g.setColour (HisstoryColours::gridText);
-    g.drawText ("Hz",
-                juce::Rectangle<float> (plotArea.getRight() + 4.0f,
-                                         plotArea.getY() - 2.0f,
-                                         24.0f, 14.0f),
-                juce::Justification::centredLeft);
+    if (topMostIdx >= 0)
+    {
+        juce::String topLabel = juce::String (freqLabels[topMostIdx]) + " Hz";
+        g.drawText (topLabel,
+                    juce::Rectangle<float> (plotArea.getRight() + 4.0f,
+                                             topMostY - 7.0f, 42.0f, 14.0f),
+                    juce::Justification::centredLeft);
+    }
+    else
+    {
+        g.drawText ("Hz",
+                    juce::Rectangle<float> (plotArea.getRight() + 4.0f,
+                                             plotArea.getY() - 2.0f,
+                                             24.0f, 14.0f),
+                    juce::Justification::centredLeft);
+    }
 }
 
 //==============================================================================
@@ -807,14 +857,6 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     bypassButton.setClickingTogglesState (true);
     addAndMakeVisible (bypassButton);
     bypassAttach = std::make_unique<ButtonAttach> (processor.apvts, "bypass", bypassButton);
-
-    // ── Spectrogram toggle ────────────────────────────────────────────────────
-    spectrogramToggle.setClickingTogglesState (true);
-    spectrogramToggle.onClick = [this]
-    {
-        spectrumDisplay.setSpectrogramMode (spectrogramToggle.getToggleState());
-    };
-    addAndMakeVisible (spectrogramToggle);
 
     // ── Collapse toggle ───────────────────────────────────────────────────────
     collapseButton.onClick = [this]
@@ -879,19 +921,23 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     setupMetricNameLabel (metricMidKeptName,      "Mid Preserved");
     setupMetricNameLabel (metricOutputName,       "Output Level");
     setupMetricNameLabel (metricHLRName,          "Harmonic Loss");
-    setupMetricNameLabel (metricFluxName,         "Residual Noise");
 
     setupMetricValueLabel (metricHfRemovedVal);
     setupMetricValueLabel (metricMidKeptVal);
     setupMetricValueLabel (metricOutputVal);
     setupMetricValueLabel (metricHLRVal);
-    setupMetricValueLabel (metricFluxVal);
 
     addAndMakeVisible (metricHfRemovedName);     addAndMakeVisible (metricHfRemovedVal);
     addAndMakeVisible (metricMidKeptName);       addAndMakeVisible (metricMidKeptVal);
     addAndMakeVisible (metricOutputName);        addAndMakeVisible (metricOutputVal);
     addAndMakeVisible (metricHLRName);           addAndMakeVisible (metricHLRVal);
-    addAndMakeVisible (metricFluxName);          addAndMakeVisible (metricFluxVal);
+
+    // ── Brand label ──────────────────────────────────────────────────────────
+    brandLabel.setText ("Hisstory", juce::dontSendNotification);
+    brandLabel.setJustificationType (juce::Justification::centred);
+    brandLabel.setFont (juce::Font (18.0f).boldened());
+    brandLabel.setColour (juce::Label::textColourId, buttonSelected);
+    addAndMakeVisible (brandLabel);
 
     startTimerHz (30);
 }
@@ -912,24 +958,12 @@ void HisstoryAudioProcessorEditor::resized()
     auto topBar = bounds.removeFromTop (36);
     topBar.reduce (12, 6);
 
-    // Left side: collapse toggle + spectrogram toggle
-    collapseButton.setBounds (topBar.removeFromLeft (36).reduced (0, 2));
-    topBar.removeFromLeft (6);
-
-    if (! collapsed)
-    {
-        spectrogramToggle.setBounds (topBar.removeFromLeft (110).reduced (0, 2));
-        spectrogramToggle.setVisible (true);
-    }
-    else
-    {
-        spectrogramToggle.setVisible (false);
-    }
-
-    // Right side: Adaptive + Bypass
+    // Right side: Bypass, Adaptive, Collapse (right to left)
     bypassButton.setBounds (topBar.removeFromRight (80).reduced (0, 2));
     topBar.removeFromRight (8);
     adaptiveButton.setBounds (topBar.removeFromRight (100).reduced (0, 2));
+    topBar.removeFromRight (8);
+    collapseButton.setBounds (topBar.removeFromRight (36).reduced (0, 2));
 
     // ── Right panel (sliders + metrics) ──────────────────────────────────────
     const int panelW = collapsed ? bounds.getWidth() : 180;
@@ -968,7 +1002,10 @@ void HisstoryAudioProcessorEditor::resized()
     layoutMetricRow (metricMidKeptName,      metricMidKeptVal);
     layoutMetricRow (metricOutputName,       metricOutputVal);
     layoutMetricRow (metricHLRName,          metricHLRVal);
-    layoutMetricRow (metricFluxName,         metricFluxVal);
+
+    // ── Brand label below metrics ────────────────────────────────────────────
+    rightPanel.removeFromTop (12);
+    brandLabel.setBounds (rightPanel.removeFromTop (24));
 
     // ── Spectrum display (remaining space) ───────────────────────────────────
     if (! collapsed)
@@ -1075,42 +1112,23 @@ void HisstoryAudioProcessorEditor::updateMetrics()
 
     // ── Harmonic Loss Ratio ─────────────────────────────────────────────
     //  Reads from the processor's atomic: output_HNR / input_HNR.
-    //  > 1.0 = harmonics preserved well relative to noise.
-    //  < 1.0 = harmonic content is being degraded.
+    //  Values near 1.0 = harmonics fully preserved.
+    //  > 1.03 = orange (mild harmonic emphasis), > 1.1 = red (significant).
+    //  < 1.0 = green (harmonics preserved well, noise removed).
     {
         const float rawHLR = processor.metricHarmonicLossRatio.load();
         constexpr float hlrSmooth = 0.92f;
         smoothHLR = hlrSmooth * smoothHLR + (1.0f - hlrSmooth) * rawHLR;
 
         metricHLRVal.setText (
-            juce::String (smoothHLR, 2) + "x", juce::dontSendNotification);
+            juce::String (smoothHLR, 3) + "x", juce::dontSendNotification);
 
-        if (smoothHLR >= 1.0f)
-            metricHLRVal.setColour (juce::Label::textColourId, metricGood);
-        else if (smoothHLR >= 0.7f)
+        if (smoothHLR > 1.1f)
+            metricHLRVal.setColour (juce::Label::textColourId, metricBad);
+        else if (smoothHLR > 1.03f)
             metricHLRVal.setColour (juce::Label::textColourId, metricWarn);
         else
-            metricHLRVal.setColour (juce::Label::textColourId, metricBad);
-    }
-
-    // ── Residual Spectral Flux ───────────────────────────────────────────
-    //  Low flux = residual is noise-like (good).
-    //  High flux = residual contains structured / musical content (bad).
-    {
-        const float rawFlux = processor.metricResidualFlux.load();
-        constexpr float fluxSmooth = 0.92f;
-        smoothFlux = fluxSmooth * smoothFlux + (1.0f - fluxSmooth) * rawFlux;
-
-        const float pct = juce::jlimit (0.0f, 100.0f, smoothFlux * 100.0f);
-        metricFluxVal.setText (
-            juce::String (static_cast<int> (pct + 0.5f)) + "%", juce::dontSendNotification);
-
-        if (pct < 25.0f)
-            metricFluxVal.setColour (juce::Label::textColourId, metricGood);
-        else if (pct < 50.0f)
-            metricFluxVal.setColour (juce::Label::textColourId, metricWarn);
-        else
-            metricFluxVal.setColour (juce::Label::textColourId, metricBad);
+            metricHLRVal.setColour (juce::Label::textColourId, metricGood);
     }
 }
 

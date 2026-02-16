@@ -98,6 +98,8 @@ public:
     void setSpectrogramMode (bool enabled);
     bool isSpectrogramMode() const { return showSpectrogram; }
 
+    juce::TextButton spectrogramToggle { "Spectrogram" };
+
     juce::Rectangle<float> plotArea;
 
 private:
@@ -129,8 +131,8 @@ private:
     // ── Spectrogram ──────────────────────────────────────────────────────────
     bool showSpectrogram = false;
 
-    static constexpr int numMelBins   = 128;
-    static constexpr int numTimeCols  = 512;
+    static constexpr int numMelBins   = 256;
+    static constexpr int numTimeCols  = 1024;
 
     // Mel filterbank: for each Mel band, store (startBin, endBin) and weights
     struct MelFilter { int startBin; int endBin; std::vector<float> weights; };
@@ -180,7 +182,6 @@ private:
 
     juce::TextButton adaptiveButton      { "Adaptive" };
     juce::TextButton bypassButton        { "Bypass" };
-    juce::TextButton spectrogramToggle   { "Spectrogram" };
     juce::TextButton collapseButton      { "<<" };
 
     bool collapsed = false;
@@ -196,13 +197,13 @@ private:
     juce::Label metricMidKeptName,      metricMidKeptVal;
     juce::Label metricOutputName,       metricOutputVal;
     juce::Label metricHLRName,          metricHLRVal;
-    juce::Label metricFluxName,         metricFluxVal;
+
+    juce::Label brandLabel;
 
     float smoothHfRemoved    = 0.0f;
     float smoothMidKept      = 0.0f;
     float smoothOutput       = 0.0f;
     float smoothHLR          = 1.0f;
-    float smoothFlux         = 0.0f;
 
     using SliderAttach = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttach = juce::AudioProcessorValueTreeState::ButtonAttachment;
