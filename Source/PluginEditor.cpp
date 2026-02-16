@@ -556,12 +556,12 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
 
     addAndMakeVisible (spectrumDisplay);
 
-    // ── Adaptive mode ────────────────────────────────────────────────────────
-    adaptiveButton.setButtonText ("Adaptive mode");
+    // ── Adaptive mode (TextButton, same style as Bypass) ────────────────────
+    adaptiveButton.setClickingTogglesState (true);
     addAndMakeVisible (adaptiveButton);
     adaptiveAttach = std::make_unique<ButtonAttach> (processor.apvts, "adaptive", adaptiveButton);
 
-    // ── Bypass button (in top bar) ───────────────────────────────────────────
+    // ── Bypass button (next to Adaptive) ──────────────────────────────────────
     bypassButton.setClickingTogglesState (true);
     addAndMakeVisible (bypassButton);
     bypassAttach = std::make_unique<ButtonAttach> (processor.apvts, "bypass", bypassButton);
@@ -611,20 +611,20 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     metricsHeader.setColour (juce::Label::textColourId, gridText);
     addAndMakeVisible (metricsHeader);
 
-    setupMetricNameLabel (metricHfRemovedName,  "HF Removed");
-    setupMetricNameLabel (metricMidKeptName,    "Mid Preserved");
-    setupMetricNameLabel (metricOutputName,     "Output Level");
-    setupMetricNameLabel (metricPurityName,     "Noise Purity");
+    setupMetricNameLabel (metricHfRemovedName,    "HF Removed");
+    setupMetricNameLabel (metricMidKeptName,      "Mid Preserved");
+    setupMetricNameLabel (metricOutputName,       "Output Level");
+    setupMetricNameLabel (metricSelectivityName,  "Selectivity");
 
     setupMetricValueLabel (metricHfRemovedVal);
     setupMetricValueLabel (metricMidKeptVal);
     setupMetricValueLabel (metricOutputVal);
-    setupMetricValueLabel (metricPurityVal);
+    setupMetricValueLabel (metricSelectivityVal);
 
-    addAndMakeVisible (metricHfRemovedName);   addAndMakeVisible (metricHfRemovedVal);
-    addAndMakeVisible (metricMidKeptName);     addAndMakeVisible (metricMidKeptVal);
-    addAndMakeVisible (metricOutputName);      addAndMakeVisible (metricOutputVal);
-    addAndMakeVisible (metricPurityName);      addAndMakeVisible (metricPurityVal);
+    addAndMakeVisible (metricHfRemovedName);     addAndMakeVisible (metricHfRemovedVal);
+    addAndMakeVisible (metricMidKeptName);       addAndMakeVisible (metricMidKeptVal);
+    addAndMakeVisible (metricOutputName);        addAndMakeVisible (metricOutputVal);
+    addAndMakeVisible (metricSelectivityName);   addAndMakeVisible (metricSelectivityVal);
 
     startTimerHz (30);
 }
@@ -645,8 +645,9 @@ void HisstoryAudioProcessorEditor::resized()
     auto topBar = bounds.removeFromTop (36);
     topBar.reduce (12, 6);
 
-    adaptiveButton.setBounds (topBar.removeFromLeft (160));
-    bypassButton.setBounds (topBar.removeFromRight (80).reduced (0, 2));
+    adaptiveButton.setBounds (topBar.removeFromLeft (100).reduced (0, 2));
+    topBar.removeFromLeft (8);
+    bypassButton.setBounds (topBar.removeFromLeft (80).reduced (0, 2));
 
     // ── Right panel (sliders + metrics) ──────────────────────────────────────
     auto rightPanel = bounds.removeFromRight (180);
@@ -680,10 +681,10 @@ void HisstoryAudioProcessorEditor::resized()
         value.setBounds (row.reduced (2, 0));
     };
 
-    layoutMetricRow (metricHfRemovedName,  metricHfRemovedVal);
-    layoutMetricRow (metricMidKeptName,    metricMidKeptVal);
-    layoutMetricRow (metricOutputName,     metricOutputVal);
-    layoutMetricRow (metricPurityName,     metricPurityVal);
+    layoutMetricRow (metricHfRemovedName,    metricHfRemovedVal);
+    layoutMetricRow (metricMidKeptName,      metricMidKeptVal);
+    layoutMetricRow (metricOutputName,       metricOutputVal);
+    layoutMetricRow (metricSelectivityName,  metricSelectivityVal);
 
     // ── Spectrum display (remaining space, no bottom margin) ─────────────────
     bounds.reduce (8, 2);
@@ -783,19 +784,33 @@ void HisstoryAudioProcessorEditor::updateMetrics()
     else
         metricOutputVal.setColour (juce::Label::textColourId, metricBad);
 
-    // ── Noise Purity: fraction of removed energy that was noise ──────────
-    float purity = processor.metricNoisePurity.load();
-    int purityPct = juce::jlimit (0, 100, static_cast<int> (purity * 100.0f + 0.5f));
-    metricPurityVal.setText (
-        juce::String (purityPct) + "%", juce::dontSendNotification);
+    // ── Selectivity: ratio of HF removal to mid-band loss ───────────────
+    //  Measures how well the algorithm targets hiss vs. music.
+    //  Higher = better (removing hiss without affecting music).
+    const float absHf  = std::abs (smoothHfRemoved);
+    const float absMid = std::max (std::abs (smoothMidKept), 0.1f);
+    const float rawSel = absHf / absMid;
 
-    // Color-code: >80% = green (mostly noise), 60-80% = orange, <60% = red
-    if (purityPct >= 80)
-        metricPurityVal.setColour (juce::Label::textColourId, metricGood);
-    else if (purityPct >= 60)
-        metricPurityVal.setColour (juce::Label::textColourId, metricWarn);
+    constexpr float selSmooth = 0.92f;
+    smoothSelectivity = selSmooth * smoothSelectivity + (1.0f - selSmooth) * rawSel;
+
+    if (smoothSelectivity >= 100.0f)
+        metricSelectivityVal.setText ("99:1", juce::dontSendNotification);
+    else if (smoothSelectivity >= 10.0f)
+        metricSelectivityVal.setText (
+            juce::String (static_cast<int> (smoothSelectivity + 0.5f)) + ":1",
+            juce::dontSendNotification);
     else
-        metricPurityVal.setColour (juce::Label::textColourId, metricBad);
+        metricSelectivityVal.setText (
+            juce::String (smoothSelectivity, 1) + ":1",
+            juce::dontSendNotification);
+
+    if (smoothSelectivity >= 8.0f)
+        metricSelectivityVal.setColour (juce::Label::textColourId, metricGood);
+    else if (smoothSelectivity >= 4.0f)
+        metricSelectivityVal.setColour (juce::Label::textColourId, metricWarn);
+    else
+        metricSelectivityVal.setColour (juce::Label::textColourId, metricBad);
 }
 
 //==============================================================================

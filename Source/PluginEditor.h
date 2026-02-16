@@ -144,8 +144,8 @@ private:
 
     SpectrumDisplay spectrumDisplay;
 
-    juce::ToggleButton adaptiveButton;
-    juce::TextButton   bypassButton  { "Bypass" };
+    juce::TextButton adaptiveButton { "Adaptive" };
+    juce::TextButton bypassButton   { "Bypass" };
 
     juce::Slider thresholdSlider, reductionSlider;
     juce::Label  thresholdLabel, reductionLabel;
@@ -154,14 +154,15 @@ private:
     // ── Metrics ──────────────────────────────────────────────────────────────
     juce::Label metricsHeader;
 
-    juce::Label metricHfRemovedName,  metricHfRemovedVal;
-    juce::Label metricMidKeptName,    metricMidKeptVal;
-    juce::Label metricOutputName,     metricOutputVal;
-    juce::Label metricPurityName,     metricPurityVal;
+    juce::Label metricHfRemovedName,    metricHfRemovedVal;
+    juce::Label metricMidKeptName,      metricMidKeptVal;
+    juce::Label metricOutputName,       metricOutputVal;
+    juce::Label metricSelectivityName,  metricSelectivityVal;
 
-    float smoothHfRemoved  = 0.0f;
-    float smoothMidKept    = 0.0f;
-    float smoothOutput     = 0.0f;
+    float smoothHfRemoved    = 0.0f;
+    float smoothMidKept      = 0.0f;
+    float smoothOutput       = 0.0f;
+    float smoothSelectivity  = 0.0f;
 
     using SliderAttach = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttach = juce::AudioProcessorValueTreeState::ButtonAttachment;
