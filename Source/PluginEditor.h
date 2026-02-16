@@ -3,16 +3,27 @@
     Hisstory – PluginEditor.h
 
     Dark-themed GUI with orange accent colours:
-      • Real-time spectrum display (input, output, threshold)
+      • Real-time spectrum display (input, output, threshold) with legend
       • 6 draggable band control-points on the threshold curve
       • Vertical sliders for Threshold and Reduction
-      • Learn, Adaptive Mode, Bypass controls
+      • Real-time quality metrics (Noise Floor, HF Reduction, Mid Preserved, Output Level)
+      • Adaptive Mode toggle and Bypass button in the top bar
   ==============================================================================
 */
 
 #pragma once
 #include "PluginProcessor.h"
 #include <JuceHeader.h>
+
+//==============================================================================
+//  Shared constants
+//==============================================================================
+namespace HisstoryConstants
+{
+    // FFT normalisation offset: -20 * log10(fftSize / 2)
+    // For fftSize = 4096: -20 * log10(2048) ≈ -66.2
+    static constexpr float fftNormDB = -66.2f;
+}
 
 //==============================================================================
 //  Colour palette – dark background with orange accents
@@ -35,6 +46,9 @@ namespace HisstoryColours
     const juce::Colour sliderTrack      { 0xff2a2e3e };
     const juce::Colour buttonBg         { 0xff1e2230 };
     const juce::Colour buttonBgHover    { 0xff282c3e };
+    const juce::Colour metricGood       { 0xff4CAF50 };   // green
+    const juce::Colour metricWarn       { 0xffFF9800 };   // orange
+    const juce::Colour metricBad        { 0xffF44336 };   // red
 }
 
 //==============================================================================
@@ -64,7 +78,7 @@ public:
 };
 
 //==============================================================================
-//  Spectrum display component
+//  Spectrum display component (includes legend)
 //==============================================================================
 class SpectrumDisplay : public juce::Component
 {
@@ -95,20 +109,17 @@ private:
     float yToDb   (float y)  const;
 
     void drawGrid           (juce::Graphics&);
+    void drawLegend         (juce::Graphics&);
     void drawSpectrumCurve  (juce::Graphics&, const std::array<float,
                              HisstoryAudioProcessor::numBins>& data,
                              juce::Colour colour, float thickness);
     void drawThresholdCurve (juce::Graphics&);
     void drawBandPoints     (juce::Graphics&);
 
-    static constexpr float minFreq  = 20.0f;
+    static constexpr float minFreq  = 100.0f;
     static constexpr float maxFreq  = 22000.0f;
     static constexpr float minDB    = -100.0f;
-    static constexpr float maxDB    = 0.0f;
-
-    // Offset to convert raw FFT magnitude dB → approximate dBFS.
-    // = −20 × log10(fftSize / 2) ≈ −60.2
-    static constexpr float fftNormDB = -60.2f;
+    static constexpr float maxDB    = -20.0f;
 };
 
 //==============================================================================
@@ -126,6 +137,7 @@ public:
 
 private:
     void timerCallback() override;
+    void updateMetrics();
 
     HisstoryAudioProcessor& processor;
     HisstoryLookAndFeel     lnf;
@@ -138,6 +150,18 @@ private:
     juce::Slider thresholdSlider, reductionSlider;
     juce::Label  thresholdLabel, reductionLabel;
     juce::Label  thresholdValue, reductionValue;
+
+    // ── Metrics ──────────────────────────────────────────────────────────────
+    juce::Label metricsHeader;
+
+    juce::Label metricHfRemovedName,  metricHfRemovedVal;
+    juce::Label metricMidKeptName,    metricMidKeptVal;
+    juce::Label metricOutputName,     metricOutputVal;
+    juce::Label metricPurityName,     metricPurityVal;
+
+    float smoothHfRemoved  = 0.0f;
+    float smoothMidKept    = 0.0f;
+    float smoothOutput     = 0.0f;
 
     using SliderAttach = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttach = juce::AudioProcessorValueTreeState::ButtonAttachment;
