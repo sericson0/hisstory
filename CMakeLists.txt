@@ -90,3 +90,37 @@ target_link_libraries(TestDehiss PRIVATE
     juce::juce_audio_utils
     juce::juce_dsp
 )
+
+# ── Benchmark executable (comparison test with RX 11) ──────────────────────
+add_executable(Benchmark
+    Source/Benchmark.cpp
+    Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp
+)
+
+target_compile_definitions(Benchmark PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_PLUGINHOST_VST3=1
+    JucePlugin_Name="Hisstory"
+    JucePlugin_ManufacturerCode=0x48697374
+    JucePlugin_PluginCode=0x48737479
+    JucePlugin_IsSynth=0
+    JucePlugin_WantsMidiInput=0
+    JucePlugin_ProducesMidiOutput=0
+    JucePlugin_IsMidiEffect=0
+    JucePlugin_EditorRequiresKeyboardFocus=0
+)
+
+target_include_directories(Benchmark PRIVATE
+    ${CMAKE_BINARY_DIR}/HisstoryVST_artefacts/JuceLibraryCode
+)
+
+target_link_libraries(Benchmark PRIVATE
+    juce::juce_audio_utils
+    juce::juce_audio_processors
+    juce::juce_audio_formats
+    juce::juce_dsp
+)

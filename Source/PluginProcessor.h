@@ -51,10 +51,10 @@ public:
     //==========================================================================
     //  DSP constants
     //==========================================================================
-    static constexpr int fftOrder  = 11;
-    static constexpr int fftSize   = 1 << fftOrder;         // 2048
-    static constexpr int hopSize   = fftSize / 4;            // 512  (75 % overlap)
-    static constexpr int numBins   = fftSize / 2 + 1;        // 1025
+    static constexpr int fftOrder  = 12;
+    static constexpr int fftSize   = 1 << fftOrder;         // 4096
+    static constexpr int hopSize   = fftSize / 4;            // 1024 (75 % overlap)
+    static constexpr int numBins   = fftSize / 2 + 1;        // 2049
     static constexpr int numBands  = 6;
 
     /** Fixed centre-frequencies for the 6 threshold-curve control-points.
@@ -133,8 +133,8 @@ private:
     //==========================================================================
     //  Internal helpers
     //==========================================================================
-    void  processSTFTFrame   (ChannelState& ch, bool updateSharedData);
-    void  processSpectrum    (float* fftData, ChannelState& ch, bool updateSharedData);
+    void  processSTFTFrame   (ChannelState& ch, bool updateSharedData, int numActiveChannels = 1);
+    void  processSpectrum    (float* fftData, ChannelState& ch, bool updateSharedData, int numActiveChannels = 1);
     void  updatePerBinThreshold();
 
     //==========================================================================
