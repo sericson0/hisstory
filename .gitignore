@@ -1,0 +1,28 @@
+# Build output
+build/
+
+# IDE / editor
+.vs/
+.vscode/
+*.user
+*.suo
+*.ncb
+*.sdf
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Binaries & object files
+*.obj
+*.o
+*.lib
+*.dll
+*.exe
+*.vst3
+*.pdb
+*.ilk
+*.exp
+
+# Example tracks (large audio files)
+example_track/

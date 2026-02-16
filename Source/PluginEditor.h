@@ -1,0 +1,149 @@
+/*
+  ==============================================================================
+    Hisstory – PluginEditor.h
+
+    Dark-themed GUI with orange accent colours:
+      • Real-time spectrum display (input, output, threshold)
+      • 6 draggable band control-points on the threshold curve
+      • Vertical sliders for Threshold and Reduction
+      • Learn, Adaptive Mode, Bypass controls
+  ==============================================================================
+*/
+
+#pragma once
+#include "PluginProcessor.h"
+#include <JuceHeader.h>
+
+//==============================================================================
+//  Colour palette – dark background with orange accents
+//==============================================================================
+namespace HisstoryColours
+{
+    const juce::Colour background      { 0xff12151f };
+    const juce::Colour plotBackground   { 0xff0b0e17 };
+    const juce::Colour gridLine         { 0xff1e2230 };
+    const juce::Colour gridText         { 0xff5a5e70 };
+    const juce::Colour textNormal       { 0xffb0b4c0 };
+    const juce::Colour textBright       { 0xfff0f0f0 };
+    const juce::Colour inputCurve       { 0xff707580 };
+    const juce::Colour outputCurve      { 0xffd8dae0 };
+    const juce::Colour thresholdCurve   { 0xffF3A10F };   // golden orange
+    const juce::Colour accent           { 0xffD96C30 };   // deep orange
+    const juce::Colour accentBright     { 0xffF3A10F };   // golden orange
+    const juce::Colour accentDim        { 0xff8B4420 };
+    const juce::Colour inactive         { 0xff5a5e70 };
+    const juce::Colour sliderTrack      { 0xff2a2e3e };
+    const juce::Colour buttonBg         { 0xff1e2230 };
+    const juce::Colour buttonBgHover    { 0xff282c3e };
+}
+
+//==============================================================================
+//  Custom LookAndFeel
+//==============================================================================
+class HisstoryLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    HisstoryLookAndFeel();
+
+    void drawLinearSlider (juce::Graphics&, int x, int y, int w, int h,
+                           float sliderPos, float minSliderPos, float maxSliderPos,
+                           juce::Slider::SliderStyle, juce::Slider&) override;
+
+    void drawToggleButton (juce::Graphics&, juce::ToggleButton&,
+                           bool shouldDrawButtonAsHighlighted,
+                           bool shouldDrawButtonAsDown) override;
+
+    void drawButtonBackground (juce::Graphics&, juce::Button&,
+                               const juce::Colour& backgroundColour,
+                               bool shouldDrawButtonAsHighlighted,
+                               bool shouldDrawButtonAsDown) override;
+
+    void drawButtonText (juce::Graphics&, juce::TextButton&,
+                         bool shouldDrawButtonAsHighlighted,
+                         bool shouldDrawButtonAsDown) override;
+};
+
+//==============================================================================
+//  Spectrum display component
+//==============================================================================
+class SpectrumDisplay : public juce::Component
+{
+public:
+    explicit SpectrumDisplay (HisstoryAudioProcessor& p);
+
+    void paint    (juce::Graphics&) override;
+    void resized  () override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp   (const juce::MouseEvent&) override;
+
+    void updateSpectrumData();
+
+    juce::Rectangle<float> plotArea;
+
+private:
+    HisstoryAudioProcessor& processor;
+
+    std::array<float, HisstoryAudioProcessor::numBins> dispInput  {};
+    std::array<float, HisstoryAudioProcessor::numBins> dispOutput {};
+
+    int draggingBand = -1;
+
+    float freqToX (float hz) const;
+    float dbToY   (float db) const;
+    float xToFreq (float x)  const;
+    float yToDb   (float y)  const;
+
+    void drawGrid           (juce::Graphics&);
+    void drawSpectrumCurve  (juce::Graphics&, const std::array<float,
+                             HisstoryAudioProcessor::numBins>& data,
+                             juce::Colour colour, float thickness);
+    void drawThresholdCurve (juce::Graphics&);
+    void drawBandPoints     (juce::Graphics&);
+
+    static constexpr float minFreq  = 20.0f;
+    static constexpr float maxFreq  = 22000.0f;
+    static constexpr float minDB    = -100.0f;
+    static constexpr float maxDB    = 0.0f;
+
+    // Offset to convert raw FFT magnitude dB → approximate dBFS.
+    // = −20 × log10(fftSize / 2) ≈ −60.2
+    static constexpr float fftNormDB = -60.2f;
+};
+
+//==============================================================================
+//  Main editor
+//==============================================================================
+class HisstoryAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                      private juce::Timer
+{
+public:
+    explicit HisstoryAudioProcessorEditor (HisstoryAudioProcessor&);
+    ~HisstoryAudioProcessorEditor() override;
+
+    void paint   (juce::Graphics&) override;
+    void resized () override;
+
+private:
+    void timerCallback() override;
+
+    HisstoryAudioProcessor& processor;
+    HisstoryLookAndFeel     lnf;
+
+    SpectrumDisplay spectrumDisplay;
+
+    juce::ToggleButton adaptiveButton;
+    juce::TextButton   bypassButton  { "Bypass" };
+
+    juce::Slider thresholdSlider, reductionSlider;
+    juce::Label  thresholdLabel, reductionLabel;
+    juce::Label  thresholdValue, reductionValue;
+
+    using SliderAttach = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ButtonAttach = juce::AudioProcessorValueTreeState::ButtonAttachment;
+
+    std::unique_ptr<SliderAttach> thresholdAttach, reductionAttach;
+    std::unique_ptr<ButtonAttach> adaptiveAttach, bypassAttach;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HisstoryAudioProcessorEditor)
+};
