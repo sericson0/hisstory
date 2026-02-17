@@ -19,17 +19,32 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --target HisstoryVST_VST3 HisstoryVST_Standalone
 
-      - name: Upload macOS VST3
+      - name: Ad-hoc codesign plugins
+        run: |
+          codesign --force --deep -s - build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3
+          codesign --force --deep -s - build/HisstoryVST_artefacts/Release/Standalone/Hisstory.app
+
+      - name: Create macOS DMG installer
+        run: |
+          mkdir -p dmg_stage
+          cp -R build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3 dmg_stage/
+          cp installer/Install.command dmg_stage/
+          chmod +x dmg_stage/Install.command
+          ln -s /Library/Audio/Plug-Ins/VST3 "dmg_stage/Drag VST3 Here"
+          hdiutil create -volname "Hisstory" -srcfolder dmg_stage \
+            -ov -format UDZO Hisstory-macOS.dmg
+
+      - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
-          name: Hisstory-macOS-VST3
-          path: build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3/
+          name: Hisstory-macOS-Installer
+          path: Hisstory-macOS.dmg
 
       - name: Upload macOS Standalone
         uses: actions/upload-artifact@v4
         with:
           name: Hisstory-macOS-Standalone
-          path: build/HisstoryVST_artefacts/Release/Standalone/Hisstory.app/
+          path: build/HisstoryVST_artefacts/**/Standalone/
 
   build-windows:
     runs-on: windows-latest
@@ -46,10 +61,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Hisstory-Windows-VST3
-          path: build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3/
+          path: build/HisstoryVST_artefacts/**/VST3/
 
       - name: Upload Windows Standalone
         uses: actions/upload-artifact@v4
         with:
           name: Hisstory-Windows-Standalone
-          path: build/HisstoryVST_artefacts/Release/Standalone/Hisstory.exe
+          path: build/HisstoryVST_artefacts/**/Standalone/
