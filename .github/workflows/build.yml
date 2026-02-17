@@ -19,17 +19,20 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --target HisstoryVST_VST3 HisstoryVST_Standalone
 
+      - name: List build artefacts
+        run: find build/HisstoryVST_artefacts -type f | head -40
+
       - name: Upload macOS VST3
         uses: actions/upload-artifact@v4
         with:
           name: Hisstory-macOS-VST3
-          path: build/HisstoryVST_artefacts/Release/VST3/
+          path: build/HisstoryVST_artefacts/**/VST3/
 
       - name: Upload macOS Standalone
         uses: actions/upload-artifact@v4
         with:
           name: Hisstory-macOS-Standalone
-          path: build/HisstoryVST_artefacts/Release/Standalone/
+          path: build/HisstoryVST_artefacts/**/Standalone/
 
   build-windows:
     runs-on: windows-latest
@@ -42,14 +45,18 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --target HisstoryVST_VST3 HisstoryVST_Standalone
 
+      - name: List build artefacts
+        shell: bash
+        run: find build/HisstoryVST_artefacts -type f | head -40
+
       - name: Upload Windows VST3
         uses: actions/upload-artifact@v4
         with:
           name: Hisstory-Windows-VST3
-          path: build/HisstoryVST_artefacts/Release/VST3/
+          path: build/HisstoryVST_artefacts/**/VST3/
 
       - name: Upload Windows Standalone
         uses: actions/upload-artifact@v4
         with:
           name: Hisstory-Windows-Standalone
-          path: build/HisstoryVST_artefacts/Release/Standalone/
+          path: build/HisstoryVST_artefacts/**/Standalone/
