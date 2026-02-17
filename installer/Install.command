@@ -1,0 +1,10 @@
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEST="$HOME/Library/Audio/Plug-Ins/VST3"
+mkdir -p "$DEST"
+cp -R "$SCRIPT_DIR/Hisstory.vst3" "$DEST/"
+xattr -cr "$DEST/Hisstory.vst3"
+echo ""
+echo "Hisstory VST3 installed successfully! Restart your DAW."
+echo ""
+read -p "Press Enter to close..."
