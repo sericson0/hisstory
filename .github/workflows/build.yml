@@ -23,13 +23,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Hisstory-macOS-VST3
-          path: build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3/
+          path: build/HisstoryVST_artefacts/Release/VST3/
 
       - name: Upload macOS Standalone
         uses: actions/upload-artifact@v4
         with:
           name: Hisstory-macOS-Standalone
-          path: build/HisstoryVST_artefacts/Release/Standalone/Hisstory.app/
+          path: build/HisstoryVST_artefacts/Release/Standalone/
 
   build-windows:
     runs-on: windows-latest
@@ -46,10 +46,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Hisstory-Windows-VST3
-          path: build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3/
+          path: build/HisstoryVST_artefacts/Release/VST3/
 
       - name: Upload Windows Standalone
         uses: actions/upload-artifact@v4
         with:
           name: Hisstory-Windows-Standalone
-          path: build/HisstoryVST_artefacts/Release/Standalone/Hisstory.exe
+          path: build/HisstoryVST_artefacts/Release/Standalone/
