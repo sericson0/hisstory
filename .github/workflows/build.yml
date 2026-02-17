@@ -19,8 +19,10 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --target HisstoryVST_VST3 HisstoryVST_Standalone
 
-      - name: List build artefacts
-        run: find build/HisstoryVST_artefacts -type f | head -40
+      - name: Ad-hoc codesign plugins
+        run: |
+          codesign --force --deep -s - build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3
+          codesign --force --deep -s - build/HisstoryVST_artefacts/Release/Standalone/Hisstory.app
 
       - name: Upload macOS VST3
         uses: actions/upload-artifact@v4
