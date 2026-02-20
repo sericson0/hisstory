@@ -159,6 +159,9 @@ void HisstoryAudioProcessor::prepareToPlay (double sampleRate, int /*samplesPerB
     for (auto& ch : channels)
         ch.reset();
 
+    previousBypassState        = false;
+    bypassFadeSamplesRemaining = 0;
+
     std::memset (inputSpectrumDB,  0, sizeof (inputSpectrumDB));
     std::memset (outputSpectrumDB, 0, sizeof (outputSpectrumDB));
 
@@ -301,6 +304,13 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     juce::ScopedNoDenormals noDenormals;
 
     const bool bypassed = pBypass->load() > 0.5f;
+
+    if (bypassed != previousBypassState)
+    {
+        bypassFadeSamplesRemaining = bypassFadeLength;
+        previousBypassState = bypassed;
+    }
+
     const bool currentAdaptive = pAdaptive->load() > 0.5f;
 
     // ── Detect adaptive mode transitions ─────────────────────────────────────
@@ -350,14 +360,8 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 processSTFTFrame (state, ch == 0, numCh, bypassed);
             }
 
-            // ── Bypass: output the dry input, STFT still runs for display ──
-            if (bypassed)
+            // ── Safety clamp (always, so wet is valid during crossfade) ──
             {
-                data[i] = inputSample;
-            }
-            else
-            {
-                // ── Hard safety: catch catastrophic gain only ─────────────
                 const float absOut = std::abs (output);
                 const float absIn  = std::abs (delayedInput);
 
@@ -368,8 +372,26 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                     else
                         output = 0.0f;
                 }
+            }
 
-                data[i] = output;
+            const float dry = inputSample;
+            const float wet = output;
+
+            if (bypassFadeSamplesRemaining > 0)
+            {
+                const float t = static_cast<float> (bypassFadeSamplesRemaining)
+                              / static_cast<float> (bypassFadeLength);
+
+                if (bypassed)
+                    data[i] = wet * t + dry * (1.0f - t);
+                else
+                    data[i] = dry * t + wet * (1.0f - t);
+
+                --bypassFadeSamplesRemaining;
+            }
+            else
+            {
+                data[i] = bypassed ? dry : wet;
             }
         }
     }
