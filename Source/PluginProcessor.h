@@ -160,6 +160,13 @@ private:
     void resetAdaptiveProfile();
 
     //==========================================================================
+    //  Bypass crossfade state
+    //==========================================================================
+    bool previousBypassState          = false;
+    int  bypassFadeSamplesRemaining   = 0;
+    static constexpr int bypassFadeLength = 64;
+
+    //==========================================================================
     //  New-track / silence detection
     //==========================================================================
     int  silenceSampleCount = 0;
