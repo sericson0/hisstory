@@ -20,12 +20,12 @@ HisstoryAudioProcessor::createParameterLayout()
     // ── Main controls ────────────────────────────────────────────────────────
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "threshold", 1 }, "Threshold",
-        juce::NormalisableRange<float> (-40.0f, 10.0f, 0.1f), -20.0f,
+        juce::NormalisableRange<float> (-40.0f, -10.0f, 0.1f), -20.0f,
         juce::AudioParameterFloatAttributes().withLabel ("dB")));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "reduction", 1 }, "Reduction",
-        juce::NormalisableRange<float> (0.0f, 40.0f, 0.1f), 12.0f,
+        juce::NormalisableRange<float> (0.0f, 32.0f, 0.1f), 12.0f,
         juce::AudioParameterFloatAttributes().withLabel ("dB")));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
