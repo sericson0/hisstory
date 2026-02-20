@@ -138,7 +138,7 @@ void SpectrumDisplay::resized()
                   .withTrimmedLeft   (8.0f)
                   .withTrimmedBottom (22.0f)
                   .withTrimmedTop    (22.0f)
-                  .withTrimmedRight  (44.0f);
+                  .withTrimmedRight  (58.0f);
 }
 
 // ── Coordinate mapping ──────────────────────────────────────────────────────
@@ -301,7 +301,7 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
             g.setColour (gridText);
             g.drawText (juce::String (static_cast<int> (db)),
                         juce::Rectangle<float> (plotArea.getRight() + 4.0f,
-                                                 y - 7.0f, 36.0f, 14.0f),
+                                                 y - 7.0f, 50.0f, 14.0f),
                         juce::Justification::centredLeft);
         }
     }
@@ -311,7 +311,7 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
     g.drawText (juce::String (static_cast<int> (maxDB)) + " dB",
                 juce::Rectangle<float> (plotArea.getRight() + 4.0f,
                                          plotArea.getY() - 7.0f,
-                                         36.0f, 14.0f),
+                                         50.0f, 14.0f),
                 juce::Justification::centredLeft);
 }
 
@@ -847,8 +847,6 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
         spectrumDisplay.setSpectrogramMode (
             spectrumDisplay.spectrogramToggle.getToggleState());
     };
-    spectrumDisplay.spectrogramToggle.setTooltip (
-        "Toggle between spectrum analyser and spectrogram view");
     addAndMakeVisible (spectrumDisplay.spectrogramToggle);
 
     // ── Adaptive mode (TextButton, same style as Bypass) ────────────────────
@@ -871,8 +869,9 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     collapseButton.onClick = [this]
     {
         collapsed = ! collapsed;
-        collapseButton.setButtonText (collapsed ? ">>" : "<<");
+        collapseButton.setButtonText (collapsed ? "<<" : ">>");
         spectrumDisplay.setVisible (! collapsed);
+        spectrumDisplay.spectrogramToggle.setVisible (! collapsed);
 
         if (collapsed)
             setSize (280, 500);
@@ -885,7 +884,7 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     thresholdSlider.setSliderStyle (juce::Slider::LinearVertical);
     thresholdSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 22);
     thresholdSlider.setTextBoxIsEditable (true);
-    thresholdSlider.textFromValueFunction = [] (double val, int)
+    thresholdSlider.textFromValueFunction = [] (double val)
     {
         return juce::String (std::abs (val), 1);
     };
@@ -893,8 +892,6 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     {
         return -std::abs (text.getDoubleValue());
     };
-    thresholdSlider.setTooltip (
-        "Noise gate threshold in dB — higher values remove more noise");
     addAndMakeVisible (thresholdSlider);
     thresholdAttach = std::make_unique<SliderAttach> (
         processor.apvts, "threshold", thresholdSlider);
@@ -909,8 +906,6 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     reductionSlider.setSliderStyle (juce::Slider::LinearVertical);
     reductionSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 22);
     reductionSlider.setTextBoxIsEditable (true);
-    reductionSlider.setTooltip (
-        "Amount of noise reduction in dB applied below the threshold");
     addAndMakeVisible (reductionSlider);
     reductionAttach = std::make_unique<SliderAttach> (
         processor.apvts, "reduction", reductionSlider);
@@ -943,6 +938,62 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     addAndMakeVisible (metricOutputName);        addAndMakeVisible (metricOutputVal);
     addAndMakeVisible (metricHLRName);           addAndMakeVisible (metricHLRVal);
 
+    // ── Help button ──────────────────────────────────────────────────────────
+    helpButton.setColour (juce::TextButton::buttonColourId, accent);
+    helpButton.setColour (juce::TextButton::textColourOffId, textBright);
+    helpButton.onClick = [this]
+    {
+        auto* aw = new juce::AlertWindow ("Hisstory Help", {}, juce::AlertWindow::NoIcon);
+
+        struct HelpEntry { const char* title; const char* body; };
+        const HelpEntry entries[] = {
+            { "THRESHOLD",     "Noise gate sensitivity. Higher values remove more noise, but also more signal." },
+            { "REDUCTION",     "dB reduction applied to signals below the threshold. Higher values attenuate noise more aggressively." },
+            { "HF REMOVED",    "dB of high-frequency energy removed." },
+            { "MID PRESERVED", "Removal of mid-range content (200-3000 Hz). If too high, reduce threshold." },
+            { "OUTPUT LEVEL",  "Overall dB gain change between input and output." },
+            { "HARMONIC LOSS", "Percent tonal energy lost during processing. Lower is better. High value indicates signal loss." }, 
+            { "CONTACT", "If you experience any issues, or have any suggestions, please contact us at tangotoolkit@gmail.com" }
+        };
+
+        juce::String formatted;
+        for (auto& e : entries)
+        {
+            if (formatted.isNotEmpty())
+                formatted += "\n";
+            formatted += juce::String (e.title) + "\n" + juce::String (e.body) + "\n";
+        }
+
+        auto* te = new juce::TextEditor();
+        te->setMultiLine (true, true);
+        te->setReadOnly (true);
+        te->setScrollbarsShown (true);
+        te->setColour (juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+        te->setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+
+        juce::Font normalFont (14.0f);
+        juce::Font boldFont   (14.0f);
+        boldFont = boldFont.boldened();
+
+        te->clear();
+        for (int i = 0; i < 6; ++i)
+        {
+            if (i > 0) te->setFont (normalFont);
+            if (i > 0) te->insertTextAtCaret ("\n");
+            te->setFont (boldFont);
+            te->insertTextAtCaret (juce::String (entries[i].title) + "\n");
+            te->setFont (normalFont);
+            te->insertTextAtCaret (juce::String (entries[i].body) + "\n");
+        }
+        te->setCaretPosition (0);
+        te->setSize (320, 300);
+
+        aw->addCustomComponent (te);
+        aw->addButton ("OK", 0);
+        aw->enterModalState (true, nullptr, true);
+    };
+    addAndMakeVisible (helpButton);
+
     // ── Brand logo ──────────────────────────────────────────────────────────
     brandLogoImage = juce::ImageCache::getFromMemory (
         BinaryData::Logo_png, BinaryData::Logo_pngSize);
@@ -966,10 +1017,13 @@ void HisstoryAudioProcessorEditor::resized()
     auto topBar = bounds.removeFromTop (36);
     topBar.reduce (12, 6);
 
-    // Left side: Spectrogram toggle
-    spectrumDisplay.spectrogramToggle.setBounds (
-        topBar.removeFromLeft (110).reduced (0, 2));
-    topBar.removeFromLeft (8);
+    // Left side: Spectrogram toggle (only when expanded)
+    if (! collapsed)
+    {
+        spectrumDisplay.spectrogramToggle.setBounds (
+            topBar.removeFromLeft (110).reduced (0, 2));
+        topBar.removeFromLeft (8);
+    }
 
     // Right side: Bypass, Adaptive, Collapse (right to left)
     bypassButton.setBounds (topBar.removeFromRight (80).reduced (0, 2));
@@ -998,7 +1052,9 @@ void HisstoryAudioProcessorEditor::resized()
     rightPanel.removeFromTop (6);
 
     // Separator line area
-    metricsHeader.setBounds (rightPanel.removeFromTop (18));
+    auto metricsRow = rightPanel.removeFromTop (18);
+    helpButton.setBounds (metricsRow.removeFromRight (18));
+    metricsHeader.setBounds (metricsRow);
     rightPanel.removeFromTop (4);
 
     // Metric rows

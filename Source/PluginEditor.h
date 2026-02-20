@@ -177,12 +177,13 @@ private:
 
     HisstoryAudioProcessor& processor;
     HisstoryLookAndFeel     lnf;
+    juce::TooltipWindow     tooltipWindow { this, 500 };
 
     SpectrumDisplay spectrumDisplay;
 
     juce::TextButton adaptiveButton      { "Adaptive" };
     juce::TextButton bypassButton        { "Bypass" };
-    juce::TextButton collapseButton      { "<<" };
+    juce::TextButton collapseButton      { ">>" };
 
     bool collapsed = false;
 
@@ -191,6 +192,7 @@ private:
 
     // ── Metrics ──────────────────────────────────────────────────────────────
     juce::Label metricsHeader;
+    juce::TextButton helpButton { "?" };
 
     juce::Label metricHfRemovedName,    metricHfRemovedVal;
     juce::Label metricMidKeptName,      metricMidKeptVal;
