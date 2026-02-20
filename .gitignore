@@ -29,3 +29,10 @@ example_track/
 
 # Benchmark output (generated WAV files)
 benchmark_output/
+
+# Apple signing credentials (never commit these)
+*.p12
+*.key
+*.cer
+*.pem
+*.csr

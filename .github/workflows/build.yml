@@ -13,16 +13,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Import Apple certificate
+        env:
+          P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+
+          echo "$P12_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
       - name: Configure CMake (Universal Binary)
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
 
       - name: Build
         run: cmake --build build --config Release --target HisstoryVST_VST3 HisstoryVST_Standalone
 
-      - name: Ad-hoc codesign plugins
+      - name: Codesign with Developer ID
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          codesign --force --deep -s - build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3
-          codesign --force --deep -s - build/HisstoryVST_artefacts/Release/Standalone/Hisstory.app
+          IDENTITY=$(security find-identity -v -p codesigning $RUNNER_TEMP/app-signing.keychain-db | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Signing with: $IDENTITY"
+
+          codesign --force --deep --options runtime \
+            -s "$IDENTITY" \
+            build/HisstoryVST_artefacts/Release/VST3/Hisstory.vst3
+
+          codesign --force --deep --options runtime \
+            -s "$IDENTITY" \
+            build/HisstoryVST_artefacts/Release/Standalone/Hisstory.app
 
       - name: Create macOS DMG installer
         run: |
@@ -33,6 +66,25 @@ jobs:
           ln -s /Library/Audio/Plug-Ins/VST3 "dmg_stage/Drag VST3 Here"
           hdiutil create -volname "Hisstory" -srcfolder dmg_stage \
             -ov -format UDZO Hisstory-macOS.dmg
+
+      - name: Notarize DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit Hisstory-macOS.dmg \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$TEAM_ID" \
+            --wait
+
+      - name: Staple notarization ticket
+        run: xcrun stapler staple Hisstory-macOS.dmg
+
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4

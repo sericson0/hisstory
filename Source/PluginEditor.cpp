@@ -130,10 +130,6 @@ SpectrumDisplay::SpectrumDisplay (HisstoryAudioProcessor& p) : processor (p)
         col.fill (minDB);
 
     buildMelFilterbank();
-
-    spectrogramToggle.setClickingTogglesState (true);
-    spectrogramToggle.onClick = [this] { setSpectrogramMode (spectrogramToggle.getToggleState()); };
-    addAndMakeVisible (spectrogramToggle);
 }
 
 void SpectrumDisplay::resized()
@@ -143,11 +139,6 @@ void SpectrumDisplay::resized()
                   .withTrimmedBottom (22.0f)
                   .withTrimmedTop    (22.0f)
                   .withTrimmedRight  (44.0f);
-
-    // Position the spectrogram toggle on the far left of the legend row
-    float btnX = plotArea.getX();
-    float btnY = plotArea.getY() - 20.0f;
-    spectrogramToggle.setBounds (static_cast<int> (btnX), static_cast<int> (btnY), 90, 18);
 }
 
 // ── Coordinate mapping ──────────────────────────────────────────────────────
@@ -233,8 +224,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 void SpectrumDisplay::drawLegend (juce::Graphics& g)
 {
     float legendY = plotArea.getY() - 16.0f;
-    // Anchor legend to the far right of the plot area
-    float legendX = plotArea.getRight() - 200.0f;
+    float legendX = plotArea.getX() + 6.0f;
     g.setFont (11.0f);
 
     // Input
@@ -267,7 +257,7 @@ void SpectrumDisplay::drawLegend (juce::Graphics& g)
 
 void SpectrumDisplay::drawGrid (juce::Graphics& g)
 {
-    g.setFont (11.0f);
+    g.setFont (13.0f);
 
     // Frequency lines (starting at 100 Hz, emphasis on higher frequencies)
     const float freqLines[] = { 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
@@ -759,7 +749,7 @@ void SpectrumDisplay::drawSpectrogram (juce::Graphics& g)
 
 void SpectrumDisplay::drawMelGrid (juce::Graphics& g)
 {
-    g.setFont (11.0f);
+    g.setFont (13.0f);
 
     const float freqLines[] = { 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
     const char* freqLabels[] = { "100", "200", "500", "1k", "2k", "5k", "10k", "20k" };
@@ -850,17 +840,34 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
 
     addAndMakeVisible (spectrumDisplay);
 
+    // ── Spectrogram toggle (in top bar, left side) ──────────────────────────
+    spectrumDisplay.spectrogramToggle.setClickingTogglesState (true);
+    spectrumDisplay.spectrogramToggle.onClick = [this]
+    {
+        spectrumDisplay.setSpectrogramMode (
+            spectrumDisplay.spectrogramToggle.getToggleState());
+    };
+    spectrumDisplay.spectrogramToggle.setTooltip (
+        "Toggle between spectrum analyser and spectrogram view");
+    addAndMakeVisible (spectrumDisplay.spectrogramToggle);
+
     // ── Adaptive mode (TextButton, same style as Bypass) ────────────────────
     adaptiveButton.setClickingTogglesState (true);
+    adaptiveButton.setTooltip (
+        "Enable adaptive noise profiling that continuously learns the noise floor");
     addAndMakeVisible (adaptiveButton);
     adaptiveAttach = std::make_unique<ButtonAttach> (processor.apvts, "adaptive", adaptiveButton);
 
     // ── Bypass button ─────────────────────────────────────────────────────────
     bypassButton.setClickingTogglesState (true);
+    bypassButton.setTooltip (
+        "Bypass all processing and pass audio through unchanged");
     addAndMakeVisible (bypassButton);
     bypassAttach = std::make_unique<ButtonAttach> (processor.apvts, "bypass", bypassButton);
 
     // ── Collapse toggle ───────────────────────────────────────────────────────
+    collapseButton.setTooltip (
+        "Collapse or expand the spectrum display panel");
     collapseButton.onClick = [this]
     {
         collapsed = ! collapsed;
@@ -876,7 +883,18 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
 
     // ── Threshold slider ─────────────────────────────────────────────────────
     thresholdSlider.setSliderStyle (juce::Slider::LinearVertical);
-    thresholdSlider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+    thresholdSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 22);
+    thresholdSlider.setTextBoxIsEditable (true);
+    thresholdSlider.textFromValueFunction = [] (double val, int)
+    {
+        return juce::String (std::abs (val), 1);
+    };
+    thresholdSlider.valueFromTextFunction = [] (const juce::String& text)
+    {
+        return -std::abs (text.getDoubleValue());
+    };
+    thresholdSlider.setTooltip (
+        "Noise gate threshold in dB — higher values remove more noise");
     addAndMakeVisible (thresholdSlider);
     thresholdAttach = std::make_unique<SliderAttach> (
         processor.apvts, "threshold", thresholdSlider);
@@ -887,15 +905,12 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     thresholdLabel.setColour (juce::Label::textColourId, textNormal);
     addAndMakeVisible (thresholdLabel);
 
-    thresholdValue.setJustificationType (juce::Justification::centred);
-    thresholdValue.setFont (juce::Font (15.0f).boldened());
-    thresholdValue.setColour (juce::Label::textColourId, textBright);
-    thresholdValue.setColour (juce::Label::backgroundColourId, accent.withAlpha (0.15f));
-    addAndMakeVisible (thresholdValue);
-
     // ── Reduction slider ─────────────────────────────────────────────────────
     reductionSlider.setSliderStyle (juce::Slider::LinearVertical);
-    reductionSlider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+    reductionSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 22);
+    reductionSlider.setTextBoxIsEditable (true);
+    reductionSlider.setTooltip (
+        "Amount of noise reduction in dB applied below the threshold");
     addAndMakeVisible (reductionSlider);
     reductionAttach = std::make_unique<SliderAttach> (
         processor.apvts, "reduction", reductionSlider);
@@ -905,12 +920,6 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     reductionLabel.setFont (juce::Font (13.0f));
     reductionLabel.setColour (juce::Label::textColourId, textNormal);
     addAndMakeVisible (reductionLabel);
-
-    reductionValue.setJustificationType (juce::Justification::centred);
-    reductionValue.setFont (juce::Font (15.0f).boldened());
-    reductionValue.setColour (juce::Label::textColourId, textBright);
-    reductionValue.setColour (juce::Label::backgroundColourId, accent.withAlpha (0.15f));
-    addAndMakeVisible (reductionValue);
 
     // ── Metrics ──────────────────────────────────────────────────────────────
     metricsHeader.setText ("METRICS", juce::dontSendNotification);
@@ -957,6 +966,11 @@ void HisstoryAudioProcessorEditor::resized()
     auto topBar = bounds.removeFromTop (36);
     topBar.reduce (12, 6);
 
+    // Left side: Spectrogram toggle
+    spectrumDisplay.spectrogramToggle.setBounds (
+        topBar.removeFromLeft (110).reduced (0, 2));
+    topBar.removeFromLeft (8);
+
     // Right side: Bypass, Adaptive, Collapse (right to left)
     bypassButton.setBounds (topBar.removeFromRight (80).reduced (0, 2));
     topBar.removeFromRight (8);
@@ -975,12 +989,10 @@ void HisstoryAudioProcessorEditor::resized()
     auto redCol = sliderSection;
 
     thresholdLabel.setBounds  (thrCol.removeFromTop (18));
-    thresholdValue.setBounds  (thrCol.removeFromBottom (24).reduced (6, 0));
-    thresholdSlider.setBounds (thrCol.reduced (thrCol.getWidth() / 2 - 16, 2));
+    thresholdSlider.setBounds (thrCol);
 
     reductionLabel.setBounds  (redCol.removeFromTop (18));
-    reductionValue.setBounds  (redCol.removeFromBottom (24).reduced (6, 0));
-    reductionSlider.setBounds (redCol.reduced (redCol.getWidth() / 2 - 16, 2));
+    reductionSlider.setBounds (redCol);
 
     // Metrics section
     rightPanel.removeFromTop (6);
@@ -1167,12 +1179,7 @@ void HisstoryAudioProcessorEditor::timerCallback()
     spectrumDisplay.updateSpectrumData();
     spectrumDisplay.repaint();
 
-    thresholdValue.setText (
-        juce::String (thresholdSlider.getValue(), 1),
-        juce::dontSendNotification);
-    reductionValue.setText (
-        juce::String (reductionSlider.getValue(), 1),
-        juce::dontSendNotification);
+    // Slider text boxes update automatically via JUCE text-from-value
 
     updateMetrics();
 }

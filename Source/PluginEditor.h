@@ -188,7 +188,6 @@ private:
 
     juce::Slider thresholdSlider, reductionSlider;
     juce::Label  thresholdLabel, reductionLabel;
-    juce::Label  thresholdValue, reductionValue;
 
     // ── Metrics ──────────────────────────────────────────────────────────────
     juce::Label metricsHeader;
