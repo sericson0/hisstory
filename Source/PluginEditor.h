@@ -183,7 +183,7 @@ private:
 
     juce::TextButton adaptiveButton      { "Adaptive" };
     juce::TextButton bypassButton        { "Bypass" };
-    juce::TextButton collapseButton      { ">>" };
+    juce::TextButton collapseButton      { "<<" };
 
     bool collapsed = false;
 

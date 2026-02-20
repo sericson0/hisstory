@@ -869,7 +869,7 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     collapseButton.onClick = [this]
     {
         collapsed = ! collapsed;
-        collapseButton.setButtonText (collapsed ? "<<" : ">>");
+        collapseButton.setButtonText (collapsed ? ">>" : "<<");
         spectrumDisplay.setVisible (! collapsed);
         spectrumDisplay.spectrogramToggle.setVisible (! collapsed);
 
@@ -906,6 +906,8 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     reductionSlider.setSliderStyle (juce::Slider::LinearVertical);
     reductionSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 22);
     reductionSlider.setTextBoxIsEditable (true);
+    reductionSlider.setScrollWheelEnabled (true);
+    reductionSlider.setMouseDragSensitivity (320);
     addAndMakeVisible (reductionSlider);
     reductionAttach = std::make_unique<SliderAttach> (
         processor.apvts, "reduction", reductionSlider);
@@ -976,7 +978,7 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
         boldFont = boldFont.boldened();
 
         te->clear();
-        for (int i = 0; i < 6; ++i)
+        for (int i = 0; i < 7; ++i)
         {
             if (i > 0) te->setFont (normalFont);
             if (i > 0) te->insertTextAtCaret ("\n");
