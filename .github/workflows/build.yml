@@ -92,6 +92,12 @@ jobs:
           name: Hisstory-macOS-Installer
           path: Hisstory-macOS.dmg
 
+      - name: Upload macOS VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hisstory-macOS-VST3
+          path: build/HisstoryVST_artefacts/**/VST3/
+
       - name: Upload macOS Standalone
         uses: actions/upload-artifact@v4
         with:
