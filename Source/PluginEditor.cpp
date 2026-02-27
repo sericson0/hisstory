@@ -978,7 +978,7 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
         spectrumDisplay.spectrogramToggle.setVisible (! collapsed);
 
         if (collapsed)
-            setSize (280, 500);
+            setSize (250, 410);
         else
             setSize (880, 500);
     };
@@ -1125,9 +1125,10 @@ HisstoryAudioProcessorEditor::~HisstoryAudioProcessorEditor()
 void HisstoryAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds();
+    const bool isCompact = collapsed;
 
     // ── Top control bar ──────────────────────────────────────────────────────
-    auto topBar = bounds.removeFromTop (36);
+    auto topBar = bounds.removeFromTop (isCompact ? 32 : 36);
     topBar.reduce (12, 6);
 
     // Left side: Spectrogram toggle (only when expanded)
@@ -1139,54 +1140,75 @@ void HisstoryAudioProcessorEditor::resized()
     }
 
     // Right side: Bypass, Adaptive, Collapse (right to left)
-    bypassButton.setBounds (topBar.removeFromRight (80).reduced (0, 2));
+    const int toggleW = isCompact ? 72 : 88;
+    bypassButton.setBounds (topBar.removeFromRight (toggleW).reduced (0, 2));
     topBar.removeFromRight (8);
-    adaptiveButton.setBounds (topBar.removeFromRight (100).reduced (0, 2));
+    adaptiveButton.setBounds (topBar.removeFromRight (toggleW).reduced (0, 2));
     topBar.removeFromRight (8);
     collapseButton.setBounds (topBar.removeFromRight (40).reduced (0, 2));
 
     // ── Right panel (sliders + metrics) ──────────────────────────────────────
     const int panelW = collapsed ? bounds.getWidth() : 180;
     auto rightPanel = collapsed ? bounds : bounds.removeFromRight (panelW);
-    rightPanel.reduce (8, 4);
+    rightPanel.reduce (isCompact ? 6 : 8, isCompact ? 2 : 4);
 
     // Slider columns
-    auto sliderSection = rightPanel.removeFromTop (220);
+    const int sliderSectionH = isCompact ? 160 : 220;
+    auto sliderSection = rightPanel.removeFromTop (sliderSectionH);
     auto thrCol = sliderSection.removeFromLeft (sliderSection.getWidth() / 2);
     auto redCol = sliderSection;
 
-    thresholdLabel.setBounds  (thrCol.removeFromTop (18));
+    thresholdLabel.setBounds  (thrCol.removeFromTop (isCompact ? 16 : 18));
     thresholdSlider.setBounds (thrCol);
 
-    reductionLabel.setBounds  (redCol.removeFromTop (18));
+    reductionLabel.setBounds  (redCol.removeFromTop (isCompact ? 16 : 18));
     reductionSlider.setBounds (redCol);
 
     // Metrics section
-    rightPanel.removeFromTop (6);
+    rightPanel.removeFromTop (isCompact ? 4 : 6);
 
-    // Separator line area
-    auto metricsRow = rightPanel.removeFromTop (18);
-    helpButton.setBounds (metricsRow.removeFromRight (18));
-    metricsHeader.setBounds (metricsRow);
-    rightPanel.removeFromTop (4);
+    if (! isCompact)
+    {
+        auto metricsRow = rightPanel.removeFromTop (18);
+        helpButton.setBounds (metricsRow.removeFromRight (18));
+        metricsHeader.setBounds (metricsRow);
+        rightPanel.removeFromTop (4);
+    }
 
     // Metric rows
     auto layoutMetricRow = [&] (juce::Label& name, juce::Label& value)
     {
-        auto row = rightPanel.removeFromTop (22);
+        auto row = rightPanel.removeFromTop (isCompact ? 20 : 22);
         name.setBounds (row.removeFromLeft (row.getWidth() * 2 / 3).reduced (4, 0));
         value.setBounds (row.reduced (2, 0));
     };
 
-    layoutMetricRow (metricHfRemovedName,    metricHfRemovedVal);
-    layoutMetricRow (metricMidKeptName,      metricMidKeptVal);
-    layoutMetricRow (metricOutputName,       metricOutputVal);
-    layoutMetricRow (metricHLRName,          metricHLRVal);
+    metricsHeader.setVisible (! isCompact);
+    helpButton.setVisible (! isCompact);
+    metricMidKeptName.setVisible (! isCompact);
+    metricMidKeptVal.setVisible (! isCompact);
+    metricOutputName.setVisible (! isCompact);
+    metricOutputVal.setVisible (! isCompact);
+
+    layoutMetricRow (metricHfRemovedName, metricHfRemovedVal);
+    if (! isCompact)
+    {
+        layoutMetricRow (metricMidKeptName, metricMidKeptVal);
+        layoutMetricRow (metricOutputName, metricOutputVal);
+    }
+    layoutMetricRow (metricHLRName, metricHLRVal);
 
     // ── Brand logo below metrics ─────────────────────────────────────────────
-    rightPanel.removeFromTop (8);
-    brandLogoBounds = rightPanel.removeFromTop (
-        std::min (rightPanel.getHeight(), 100));
+    if (! isCompact)
+    {
+        rightPanel.removeFromTop (8);
+        brandLogoBounds = rightPanel.removeFromTop (
+            std::min (rightPanel.getHeight(), 100));
+    }
+    else
+    {
+        brandLogoBounds = {};
+    }
 
     // ── Spectrum display (remaining space) ───────────────────────────────────
     if (! collapsed)
@@ -1202,13 +1224,15 @@ void HisstoryAudioProcessorEditor::resized()
 void HisstoryAudioProcessorEditor::paint (juce::Graphics& g)
 {
     g.fillAll (background);
+    const bool isCompact = collapsed;
 
     // Draw a subtle separator line between sliders and metrics
     const int panelW = collapsed ? getWidth() : 180;
     auto rightPanel = getLocalBounds().removeFromRight (panelW);
-    rightPanel.removeFromTop (36);
-    rightPanel.reduce (8, 4);
-    int sepY = rightPanel.getY() + 220 + 2;
+    rightPanel.removeFromTop (isCompact ? 32 : 36);
+    rightPanel.reduce (isCompact ? 6 : 8, isCompact ? 2 : 4);
+    const int sliderSectionH = isCompact ? 160 : 220;
+    int sepY = rightPanel.getY() + sliderSectionH + 2;
     g.setColour (gridLine);
     g.drawHorizontalLine (sepY, (float)(rightPanel.getX() + 8),
                           (float)(rightPanel.getRight() - 8));
@@ -1238,6 +1262,14 @@ void HisstoryAudioProcessorEditor::paint (juce::Graphics& g)
 
         g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
         g.drawImage (brandLogoImage, drawArea);
+    }
+
+    if (isCompact)
+    {
+        auto footer = getLocalBounds().removeFromBottom (20);
+        g.setColour (accentBright);
+        g.setFont (juce::Font (12.0f).boldened());
+        g.drawText ("HISSTORY", footer, juce::Justification::centred);
     }
 }
 
