@@ -238,7 +238,7 @@ void SpectrumDisplay::resized()
 {
     plotArea = getLocalBounds().toFloat()
                   .withTrimmedLeft   (8.0f)
-                  .withTrimmedBottom (22.0f)
+                  .withTrimmedBottom (24.0f)
                   .withTrimmedTop    (22.0f)
                   .withTrimmedRight  (58.0f);
 }
@@ -361,11 +361,11 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
 {
     g.setFont (13.0f);
 
-    // Frequency lines (analyzer starts at 20 Hz)
-    const float freqLines[] = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
-    const char* freqLabels[] = { "20", "50", "100", "200", "500", "1k", "2k", "5k", "10k", "20k" };
+    // Frequency lines (analyzer starts at 200 Hz)
+    const float freqLines[] = { 200, 500, 1000, 2000, 5000, 10000, 20000 };
+    const char* freqLabels[] = { "200", "500", "1k", "2k", "5k", "10k", "20k" };
 
-    for (int i = 0; i < 10; ++i)
+    for (int i = 0; i < 7; ++i)
     {
         float x = freqToX (freqLines[i]);
         if (x < plotArea.getX() || x > plotArea.getRight()) continue;
@@ -374,8 +374,9 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
         g.drawVerticalLine (static_cast<int> (x),
                             plotArea.getY(), plotArea.getBottom());
         g.setColour (gridText);
+        const float labelX = x - 18.0f + (i == 0 ? 4.0f : 0.0f);
         g.drawText (freqLabels[i],
-                    juce::Rectangle<float> (x - 18.0f,
+                    juce::Rectangle<float> (labelX,
                                              plotArea.getBottom() + 3.0f,
                                              36.0f, 16.0f),
                     juce::Justification::centred);
@@ -384,7 +385,7 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
     // "Hz" label -- placed after the rightmost frequency label with gap
     g.setColour (gridText);
     g.drawText ("Hz",
-                juce::Rectangle<float> (plotArea.getRight() + 4.0f,
+                juce::Rectangle<float> (plotArea.getRight() + 2.0f,
                                          plotArea.getBottom() + 3.0f,
                                          24.0f, 16.0f),
                 juce::Justification::centredLeft);
