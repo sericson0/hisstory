@@ -129,7 +129,7 @@ private:
     void drawThresholdCurve (juce::Graphics&);
     void drawBandPoints     (juce::Graphics&);
 
-    static constexpr float analyzerMinFreq  = 20.0f;
+    static constexpr float analyzerMinFreq  = 200.0f;
     static constexpr float analyzerMaxFreq  = 22000.0f;
     static constexpr float analyzerMinDB    = -100.0f;
     static constexpr float analyzerMaxDB    = -30.0f;

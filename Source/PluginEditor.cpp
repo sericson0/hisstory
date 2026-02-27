@@ -895,14 +895,15 @@ void SpectrumDisplay::drawMelGrid (juce::Graphics& g)
         }
     }
 
-    // Top-right: show the topmost frequency and "Hz" together
+    // Top-right: show the topmost frequency and "Hz" together.
+    // Use a slightly wider rect so labels like "200 Hz" don't overlap.
     g.setColour (HisstoryColours::gridText);
     if (topMostIdx >= 0)
     {
         juce::String topLabel = juce::String (freqLabels[topMostIdx]) + " Hz";
         g.drawText (topLabel,
                     juce::Rectangle<float> (plotArea.getRight() + 4.0f,
-                                             topMostY - 7.0f, 42.0f, 14.0f),
+                                             topMostY - 7.0f, 58.0f, 14.0f),
                     juce::Justification::centredLeft);
     }
     else
@@ -985,7 +986,7 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
         lnf.setCompactTooltipMode (collapsed);
 
         if (collapsed)
-            setSize (228, 320);
+            setSize (228, 252);
         else
             setSize (880, 500);
     };
@@ -1171,10 +1172,10 @@ void HisstoryAudioProcessorEditor::resized()
     auto redCol = sliderSection;
 
     thresholdLabel.setBounds  (thrCol.removeFromTop (isCompact ? 16 : 18));
-    thresholdSlider.setBounds (thrCol);
+    thresholdSlider.setBounds (isCompact ? thrCol.translated (0, -4) : thrCol);
 
     reductionLabel.setBounds  (redCol.removeFromTop (isCompact ? 16 : 18));
-    reductionSlider.setBounds (redCol);
+    reductionSlider.setBounds (isCompact ? redCol.translated (0, -4) : redCol);
 
     // Metrics section
     rightPanel.removeFromTop (isCompact ? 2 : 6);
@@ -1188,6 +1189,9 @@ void HisstoryAudioProcessorEditor::resized()
     }
 
     // Metric rows
+    if (isCompact)
+        rightPanel.removeFromTop (4);
+
     auto layoutMetricRow = [&] (juce::Label& name, juce::Label& value)
     {
         auto row = rightPanel.removeFromTop (isCompact ? 18 : 22);
@@ -1221,8 +1225,7 @@ void HisstoryAudioProcessorEditor::resized()
     else
     {
         brandLogoBounds = {};
-        rightPanel.removeFromTop (2);
-        compactFooterBounds = rightPanel.removeFromTop (24).reduced (0, 2);
+        compactFooterBounds = getLocalBounds().removeFromBottom (18).reduced (0, 1);
     }
 
     // ── Spectrum display (remaining space) ───────────────────────────────────
