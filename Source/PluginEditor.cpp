@@ -44,14 +44,18 @@ void HisstoryLookAndFeel::drawLinearSlider (juce::Graphics& g,
     const float top    = static_cast<float> (y) + 6.0f;
     const float bottom = static_cast<float> (y + h) - 6.0f;
 
-    g.setColour (sliderTrack);
+    const auto trackCol = slider.findColour (juce::Slider::trackColourId);
+    const auto fillCol  = slider.findColour (juce::Slider::rotarySliderFillColourId);
+    const auto thumbCol = slider.findColour (juce::Slider::thumbColourId);
+
+    g.setColour (trackCol);
     g.drawLine (cx, top, cx, bottom, 3.0f);
 
-    g.setColour (accentBright);
+    g.setColour (fillCol);
     g.drawLine (cx, sliderPos, cx, bottom, 3.0f);
 
     const float thumbR = 7.0f;
-    g.setColour (textBright);
+    g.setColour (thumbCol);
     g.fillEllipse (cx - thumbR, sliderPos - thumbR, thumbR * 2.0f, thumbR * 2.0f);
     g.setColour (accent);
     g.drawEllipse (cx - thumbR, sliderPos - thumbR, thumbR * 2.0f, thumbR * 2.0f, 1.5f);
@@ -95,6 +99,34 @@ void HisstoryLookAndFeel::drawButtonBackground (juce::Graphics& g,
                                                   bool highlighted,
                                                   bool down)
 {
+    if (button.getComponentID() == "spectrogramModeToggle")
+    {
+        auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
+        const float r = 6.0f;
+        const bool spectrogramOn = button.getToggleState();
+        const auto leftHalf = bounds.removeFromLeft (bounds.getWidth() * 0.5f);
+        const auto rightHalf = bounds;
+
+        auto activeCol = accent;
+        if (highlighted) activeCol = activeCol.brighter (0.1f);
+        if (down) activeCol = activeCol.brighter (0.1f);
+
+        g.setColour (buttonBg);
+        g.fillRoundedRectangle (leftHalf, r);
+        g.fillRoundedRectangle (rightHalf, r);
+
+        g.setColour (spectrogramOn ? buttonBg : activeCol);
+        g.fillRoundedRectangle (leftHalf.reduced (1.0f), r - 1.0f);
+        g.setColour (spectrogramOn ? activeCol : buttonBg);
+        g.fillRoundedRectangle (rightHalf.reduced (1.0f), r - 1.0f);
+
+        g.setColour (gridLine);
+        g.drawRoundedRectangle (button.getLocalBounds().toFloat().reduced (1.0f), r, 1.0f);
+        g.drawLine (button.getWidth() * 0.5f, 4.0f, button.getWidth() * 0.5f,
+                    (float) button.getHeight() - 4.0f, 1.0f);
+        return;
+    }
+
     auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
     bool on = button.getToggleState();
 
@@ -112,6 +144,70 @@ void HisstoryLookAndFeel::drawButtonText (juce::Graphics& g,
                                             juce::TextButton& button,
                                             bool /*highlighted*/, bool /*down*/)
 {
+    if (button.getComponentID() == "spectrogramModeToggle")
+    {
+        const bool spectrogramOn = button.getToggleState();
+        const juce::Font normalFont (13.0f);
+        const juce::Font boldFont = normalFont.boldened();
+        auto bounds = button.getLocalBounds().toFloat().reduced (2.0f);
+        auto leftHalf = bounds.removeFromLeft (bounds.getWidth() * 0.5f);
+        auto rightHalf = bounds;
+
+        g.setColour (spectrogramOn ? textNormal : textBright);
+        g.setFont (spectrogramOn ? normalFont : boldFont);
+        g.drawText ("Analyzer", leftHalf, juce::Justification::centred, true);
+
+        g.setColour (spectrogramOn ? textBright : textNormal);
+        g.setFont (spectrogramOn ? boldFont : normalFont);
+        g.drawText ("Spectrogram", rightHalf, juce::Justification::centred, true);
+        return;
+    }
+
+    if (button.getComponentID() == "collapseGlyphButton")
+    {
+        const bool showExpandGlyph = button.getToggleState();
+        const auto b = button.getLocalBounds().toFloat().reduced (8.0f);
+        const auto c = b.getCentre();
+        const float s = juce::jmin (b.getWidth(), b.getHeight()) * 0.30f;
+
+        auto drawArrow = [&] (juce::Point<float> start, juce::Point<float> end)
+        {
+            juce::Path p;
+            p.startNewSubPath (start);
+            p.lineTo (end);
+
+            const auto dir = end - start;
+            const float len = std::sqrt (dir.x * dir.x + dir.y * dir.y);
+            if (len > 0.001f)
+            {
+                const juce::Point<float> n (dir.x / len, dir.y / len);
+                const juce::Point<float> t (-n.y, n.x);
+                const float head = 3.0f;
+                p.startNewSubPath (end);
+                p.lineTo (end - n * head + t * head * 0.75f);
+                p.startNewSubPath (end);
+                p.lineTo (end - n * head - t * head * 0.75f);
+            }
+
+            g.strokePath (p, juce::PathStrokeType (1.7f));
+        };
+
+        g.setColour (textBright);
+        if (showExpandGlyph)
+        {
+            // Expand icon: two arrows pointing outwards.
+            drawArrow ({ c.x - 2.0f, c.y }, { c.x - s - 4.0f, c.y });
+            drawArrow ({ c.x + 2.0f, c.y }, { c.x + s + 4.0f, c.y });
+        }
+        else
+        {
+            // Collapse icon: two arrows pointing inwards.
+            drawArrow ({ c.x - s - 4.0f, c.y }, { c.x - 2.0f, c.y });
+            drawArrow ({ c.x + s + 4.0f, c.y }, { c.x + 2.0f, c.y });
+        }
+        return;
+    }
+
     g.setColour (button.getToggleState() ? textBright : textNormal);
     g.setFont (14.0f);
     g.drawText (button.getButtonText(), button.getLocalBounds(),
@@ -393,7 +489,8 @@ void SpectrumDisplay::drawThresholdCurve (juce::Graphics& g)
         else           { path.lineTo (x, y); }
     }
 
-    g.setColour (thresholdCurve);
+    const bool bypassed = processor.apvts.getRawParameterValue ("bypass")->load() > 0.5f;
+    g.setColour (bypassed ? inactive : thresholdCurve);
     g.strokePath (path, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved));
 }
 
@@ -405,6 +502,9 @@ void SpectrumDisplay::drawBandPoints (juce::Graphics& g)
     const float globalThr = processor.apvts.getRawParameterValue ("threshold")->load();
     const bool  hasProfile = processor.noiseProfileReady.load();
     const bool  isAdaptive = processor.apvts.getRawParameterValue ("adaptive")->load() > 0.5f;
+
+    const bool bypassed = processor.apvts.getRawParameterValue ("bypass")->load() > 0.5f;
+    const auto pointColour = bypassed ? inactive : thresholdCurve;
 
     for (int i = 0; i < HisstoryAudioProcessor::numBands; ++i)
     {
@@ -437,14 +537,14 @@ void SpectrumDisplay::drawBandPoints (juce::Graphics& g)
 
         const float r = 12.0f;
 
-        g.setColour (thresholdCurve);
+        g.setColour (pointColour);
         g.fillEllipse (x - r, y - r, r * 2.0f, r * 2.0f);
 
         g.setColour (plotBackground);
         g.fillEllipse (x - r + 2.5f, y - r + 2.5f,
                        (r - 2.5f) * 2.0f, (r - 2.5f) * 2.0f);
 
-        g.setColour (thresholdCurve);
+        g.setColour (pointColour);
         g.setFont (juce::Font (12.0f).boldened());
         g.drawText (juce::String (i + 1),
                     juce::Rectangle<float> (x - r, y - r, r * 2.0f, r * 2.0f),
@@ -841,6 +941,7 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     addAndMakeVisible (spectrumDisplay);
 
     // ── Spectrogram toggle (in top bar, left side) ──────────────────────────
+    spectrumDisplay.spectrogramToggle.setComponentID ("spectrogramModeToggle");
     spectrumDisplay.spectrogramToggle.setClickingTogglesState (true);
     spectrumDisplay.spectrogramToggle.onClick = [this]
     {
@@ -864,12 +965,15 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     bypassAttach = std::make_unique<ButtonAttach> (processor.apvts, "bypass", bypassButton);
 
     // ── Collapse toggle ───────────────────────────────────────────────────────
+    collapseButton.setComponentID ("collapseGlyphButton");
+    collapseButton.setButtonText ("");
+    collapseButton.setToggleState (false, juce::dontSendNotification);
     collapseButton.setTooltip (
         "Collapse or expand the spectrum display panel");
     collapseButton.onClick = [this]
     {
         collapsed = ! collapsed;
-        collapseButton.setButtonText (collapsed ? ">>" : "<<");
+        collapseButton.setToggleState (collapsed, juce::dontSendNotification);
         spectrumDisplay.setVisible (! collapsed);
         spectrumDisplay.spectrogramToggle.setVisible (! collapsed);
 
@@ -884,6 +988,9 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     thresholdSlider.setSliderStyle (juce::Slider::LinearVertical);
     thresholdSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 22);
     thresholdSlider.setTextBoxIsEditable (true);
+    thresholdSlider.setColour (juce::Slider::trackColourId, sliderTrack);
+    thresholdSlider.setColour (juce::Slider::rotarySliderFillColourId, accentBright);
+    thresholdSlider.setColour (juce::Slider::thumbColourId, textBright);
     thresholdSlider.textFromValueFunction = [] (double val)
     {
         return juce::String (std::abs (val), 1);
@@ -906,6 +1013,9 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     reductionSlider.setSliderStyle (juce::Slider::LinearVertical);
     reductionSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 22);
     reductionSlider.setTextBoxIsEditable (true);
+    reductionSlider.setColour (juce::Slider::trackColourId, sliderTrack);
+    reductionSlider.setColour (juce::Slider::rotarySliderFillColourId, accentBright);
+    reductionSlider.setColour (juce::Slider::thumbColourId, textBright);
     reductionSlider.setScrollWheelEnabled (true);
     reductionSlider.setMouseDragSensitivity (320);
     addAndMakeVisible (reductionSlider);
@@ -1000,6 +1110,7 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     brandLogoImage = juce::ImageCache::getFromMemory (
         BinaryData::Logo_png, BinaryData::Logo_pngSize);
 
+    updateBypassVisualState (processor.apvts.getRawParameterValue ("bypass")->load() > 0.5f);
     startTimerHz (30);
 }
 
@@ -1023,7 +1134,7 @@ void HisstoryAudioProcessorEditor::resized()
     if (! collapsed)
     {
         spectrumDisplay.spectrogramToggle.setBounds (
-            topBar.removeFromLeft (110).reduced (0, 2));
+            topBar.removeFromLeft (230).reduced (0, 2));
         topBar.removeFromLeft (8);
     }
 
@@ -1032,7 +1143,7 @@ void HisstoryAudioProcessorEditor::resized()
     topBar.removeFromRight (8);
     adaptiveButton.setBounds (topBar.removeFromRight (100).reduced (0, 2));
     topBar.removeFromRight (8);
-    collapseButton.setBounds (topBar.removeFromRight (36).reduced (0, 2));
+    collapseButton.setBounds (topBar.removeFromRight (40).reduced (0, 2));
 
     // ── Right panel (sliders + metrics) ──────────────────────────────────────
     const int panelW = collapsed ? bounds.getWidth() : 180;
@@ -1130,11 +1241,64 @@ void HisstoryAudioProcessorEditor::paint (juce::Graphics& g)
     }
 }
 
+void HisstoryAudioProcessorEditor::updateBypassVisualState (bool bypassed)
+{
+    if (bypassed == bypassVisualState)
+        return;
+
+    bypassVisualState = bypassed;
+
+    const auto mutedText = gridText;
+    const auto activeText = textNormal;
+    const auto thrTrack = bypassed ? inactive : sliderTrack;
+    const auto thrFill = bypassed ? inactive : accentBright;
+    const auto thrThumb = bypassed ? gridText : textBright;
+    const auto redTrack = bypassed ? inactive : sliderTrack;
+    const auto redFill = bypassed ? inactive : accentBright;
+    const auto redThumb = bypassed ? gridText : textBright;
+
+    thresholdSlider.setColour (juce::Slider::trackColourId, thrTrack);
+    thresholdSlider.setColour (juce::Slider::rotarySliderFillColourId, thrFill);
+    thresholdSlider.setColour (juce::Slider::thumbColourId, thrThumb);
+    thresholdSlider.setColour (juce::Slider::textBoxTextColourId, bypassed ? mutedText : textBright);
+    thresholdLabel.setColour (juce::Label::textColourId, bypassed ? mutedText : activeText);
+
+    reductionSlider.setColour (juce::Slider::trackColourId, redTrack);
+    reductionSlider.setColour (juce::Slider::rotarySliderFillColourId, redFill);
+    reductionSlider.setColour (juce::Slider::thumbColourId, redThumb);
+    reductionSlider.setColour (juce::Slider::textBoxTextColourId, bypassed ? mutedText : textBright);
+    reductionLabel.setColour (juce::Label::textColourId, bypassed ? mutedText : activeText);
+
+    metricHfRemovedVal.setColour (juce::Label::textColourId, bypassed ? mutedText : textBright);
+    metricMidKeptVal.setColour (juce::Label::textColourId, bypassed ? mutedText : textBright);
+    metricOutputVal.setColour (juce::Label::textColourId, bypassed ? mutedText : textBright);
+    metricHLRVal.setColour (juce::Label::textColourId, bypassed ? mutedText : textBright);
+
+    thresholdSlider.repaint();
+    reductionSlider.repaint();
+    spectrumDisplay.repaint();
+}
+
 //==============================================================================
 //  Metrics computation
 //==============================================================================
 void HisstoryAudioProcessorEditor::updateMetrics()
 {
+    const bool bypassed = processor.apvts.getRawParameterValue ("bypass")->load() > 0.5f;
+    if (bypassed)
+    {
+        metricHfRemovedVal.setText ("-.-", juce::dontSendNotification);
+        metricMidKeptVal.setText ("-.-", juce::dontSendNotification);
+        metricOutputVal.setText ("-.-", juce::dontSendNotification);
+        metricHLRVal.setText ("-.-", juce::dontSendNotification);
+
+        metricHfRemovedVal.setColour (juce::Label::textColourId, gridText);
+        metricMidKeptVal.setColour (juce::Label::textColourId, gridText);
+        metricOutputVal.setColour (juce::Label::textColourId, gridText);
+        metricHLRVal.setColour (juce::Label::textColourId, gridText);
+        return;
+    }
+
     const float sr = processor.currentSampleRate.load();
     const float binHz = sr / static_cast<float> (HisstoryAudioProcessor::fftSize);
 
@@ -1239,5 +1403,7 @@ void HisstoryAudioProcessorEditor::timerCallback()
 
     // Slider text boxes update automatically via JUCE text-from-value
 
+    const bool bypassed = processor.apvts.getRawParameterValue ("bypass")->load() > 0.5f;
+    updateBypassVisualState (bypassed);
     updateMetrics();
 }

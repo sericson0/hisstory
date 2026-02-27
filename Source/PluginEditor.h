@@ -174,6 +174,7 @@ public:
 private:
     void timerCallback() override;
     void updateMetrics();
+    void updateBypassVisualState (bool bypassed);
 
     HisstoryAudioProcessor& processor;
     HisstoryLookAndFeel     lnf;
@@ -206,6 +207,7 @@ private:
     float smoothMidKept      = 0.0f;
     float smoothOutput       = 0.0f;
     float smoothHLR          = 0.0f;
+    bool bypassVisualState   = false;
 
     using SliderAttach = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttach = juce::AudioProcessorValueTreeState::ButtonAttachment;
