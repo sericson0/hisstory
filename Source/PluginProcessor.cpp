@@ -159,8 +159,12 @@ void HisstoryAudioProcessor::prepareToPlay (double sampleRate, int /*samplesPerB
     for (auto& ch : channels)
         ch.reset();
 
-    previousBypassState        = false;
-    bypassFadeSamplesRemaining = 0;
+    previousBypassState         = pBypass->load() > 0.5f;
+    bypassTargetWetMix          = previousBypassState ? 0.0f : 1.0f;
+    bypassWetMix                = bypassTargetWetMix;
+    bypassWetMixStep            = 0.0f;
+    bypassRampLengthSamples     = std::max (32, static_cast<int> (0.01 * sampleRate)); // 10 ms
+    bypassRampSamplesRemaining  = 0;
 
     std::memset (inputSpectrumDB,  0, sizeof (inputSpectrumDB));
     std::memset (outputSpectrumDB, 0, sizeof (outputSpectrumDB));
@@ -307,8 +311,11 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     if (bypassed != previousBypassState)
     {
-        bypassFadeSamplesRemaining = bypassFadeLength;
-        previousBypassState = bypassed;
+        previousBypassState      = bypassed;
+        bypassTargetWetMix       = bypassed ? 0.0f : 1.0f;
+        bypassRampSamplesRemaining = bypassRampLengthSamples;
+        bypassWetMixStep         = (bypassTargetWetMix - bypassWetMix)
+                                 / static_cast<float> (std::max (1, bypassRampLengthSamples));
     }
 
     const bool currentAdaptive = pAdaptive->load() > 0.5f;
@@ -357,7 +364,7 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             if (--state.samplesUntilHop == 0)
             {
                 state.samplesUntilHop = hopSize;
-                processSTFTFrame (state, ch == 0, numCh, bypassed);
+                processSTFTFrame (state, ch == 0, numCh);
             }
 
             // ── Safety clamp (always, so wet is valid during crossfade) ──
@@ -374,25 +381,22 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 }
             }
 
-            const float dry = inputSample;
+            const float dry = delayedInput;
             const float wet = output;
 
-            if (bypassFadeSamplesRemaining > 0)
+            if (bypassRampSamplesRemaining > 0)
             {
-                const float t = static_cast<float> (bypassFadeSamplesRemaining)
-                              / static_cast<float> (bypassFadeLength);
+                bypassWetMix += bypassWetMixStep;
+                --bypassRampSamplesRemaining;
 
-                if (bypassed)
-                    data[i] = wet * t + dry * (1.0f - t);
-                else
-                    data[i] = dry * t + wet * (1.0f - t);
+                if (bypassRampSamplesRemaining == 0)
+                    bypassWetMix = bypassTargetWetMix;
+            }
 
-                --bypassFadeSamplesRemaining;
-            }
-            else
-            {
-                data[i] = bypassed ? dry : wet;
-            }
+            const float wetMix = juce::jlimit (0.0f, 1.0f, bypassWetMix);
+            const float wetGain = std::sin (wetMix * juce::MathConstants<float>::halfPi);
+            const float dryGain = std::cos (wetMix * juce::MathConstants<float>::halfPi);
+            data[i] = dry * dryGain + wet * wetGain;
         }
     }
 
@@ -434,8 +438,7 @@ void HisstoryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 //==============================================================================
 void HisstoryAudioProcessor::processSTFTFrame (ChannelState& ch,
                                                 bool updateSharedData,
-                                                int numActiveChannels,
-                                                bool bypassed)
+                                                int numActiveChannels)
 {
     alignas(16) float fftData[fftSize * 2] {};
     for (int i = 0; i < fftSize; ++i)
@@ -444,7 +447,7 @@ void HisstoryAudioProcessor::processSTFTFrame (ChannelState& ch,
     hannWindow.multiplyWithWindowingTable (fftData, static_cast<size_t> (fftSize));
     forwardFFT.performRealOnlyForwardTransform (fftData, true);
 
-    processSpectrum (fftData, ch, updateSharedData, numActiveChannels, bypassed);
+    processSpectrum (fftData, ch, updateSharedData, numActiveChannels);
 
     forwardFFT.performRealOnlyInverseTransform (fftData);
     hannWindow.multiplyWithWindowingTable (fftData, static_cast<size_t> (fftSize));
@@ -462,8 +465,7 @@ void HisstoryAudioProcessor::processSTFTFrame (ChannelState& ch,
 void HisstoryAudioProcessor::processSpectrum (float* fftData,
                                                ChannelState& ch,
                                                bool updateSharedData,
-                                               int numActiveChannels,
-                                               bool bypassed)
+                                               int numActiveChannels)
 {
     // ── Parameters ───────────────────────────────────────────────────────────
     const float reductionDB   = pReduction->load();
@@ -544,17 +546,6 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
             if (updateSharedData)
                 noiseProfileDisplay[bin] = noiseProfile[bin];
         }
-    }
-
-    // ── Bypass: update display with input spectrum only, skip processing ──
-    if (bypassed)
-    {
-        if (updateSharedData)
-        {
-            for (int bin = 0; bin < numBins; ++bin)
-                outputSpectrumDB[bin] = inputSpectrumDB[bin];
-        }
-        return;
     }
 
     // ── Tonal peak detection (protect harmonics from over-gating) ─────────

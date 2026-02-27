@@ -160,11 +160,14 @@ private:
     void resetAdaptiveProfile();
 
     //==========================================================================
-    //  Bypass crossfade state
+    //  Smoothed wet/dry bypass state
     //==========================================================================
-    bool previousBypassState          = false;
-    int  bypassFadeSamplesRemaining   = 0;
-    static constexpr int bypassFadeLength = 64;
+    bool  previousBypassState       = false;
+    float bypassWetMix              = 1.0f;   // 1 = fully wet, 0 = fully dry
+    float bypassTargetWetMix        = 1.0f;
+    float bypassWetMixStep          = 0.0f;
+    int   bypassRampSamplesRemaining = 0;
+    int   bypassRampLengthSamples    = 64;
 
     //==========================================================================
     //  New-track / silence detection
@@ -181,8 +184,8 @@ private:
     //==========================================================================
     //  Internal helpers
     //==========================================================================
-    void  processSTFTFrame   (ChannelState& ch, bool updateSharedData, int numActiveChannels = 1, bool bypassed = false);
-    void  processSpectrum    (float* fftData, ChannelState& ch, bool updateSharedData, int numActiveChannels = 1, bool bypassed = false);
+    void  processSTFTFrame   (ChannelState& ch, bool updateSharedData, int numActiveChannels = 1);
+    void  processSpectrum    (float* fftData, ChannelState& ch, bool updateSharedData, int numActiveChannels = 1);
     void  updatePerBinThreshold();
 
     //==========================================================================
