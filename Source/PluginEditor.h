@@ -59,6 +59,7 @@ class HisstoryLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
     HisstoryLookAndFeel();
+    void setCompactTooltipMode (bool shouldUseCompact) { compactTooltipMode = shouldUseCompact; }
 
     void drawLinearSlider (juce::Graphics&, int x, int y, int w, int h,
                            float sliderPos, float minSliderPos, float maxSliderPos,
@@ -76,6 +77,11 @@ public:
     void drawButtonText (juce::Graphics&, juce::TextButton&,
                          bool shouldDrawButtonAsHighlighted,
                          bool shouldDrawButtonAsDown) override;
+
+    void drawTooltip (juce::Graphics&, const juce::String& text, int width, int height) override;
+
+private:
+    bool compactTooltipMode = false;
 };
 
 //==============================================================================
@@ -123,10 +129,14 @@ private:
     void drawThresholdCurve (juce::Graphics&);
     void drawBandPoints     (juce::Graphics&);
 
-    static constexpr float minFreq  = 100.0f;
-    static constexpr float maxFreq  = 22000.0f;
-    static constexpr float minDB    = -100.0f;
-    static constexpr float maxDB    = -20.0f;
+    static constexpr float analyzerMinFreq  = 20.0f;
+    static constexpr float analyzerMaxFreq  = 22000.0f;
+    static constexpr float analyzerMinDB    = -100.0f;
+    static constexpr float analyzerMaxDB    = -30.0f;
+    static constexpr float spectrogramMinFreq = 100.0f;
+    static constexpr float spectrogramMaxFreq = 22000.0f;
+    static constexpr float spectrogramMinDB   = -100.0f;
+    static constexpr float spectrogramMaxDB   = -20.0f;
 
     // ── Spectrogram ──────────────────────────────────────────────────────────
     bool showSpectrogram = false;
@@ -202,6 +212,7 @@ private:
 
     juce::Image brandLogoImage;
     juce::Rectangle<int> brandLogoBounds;
+    juce::Rectangle<int> compactFooterBounds;
 
     float smoothHfRemoved    = 0.0f;
     float smoothMidKept      = 0.0f;

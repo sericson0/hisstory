@@ -102,28 +102,13 @@ void HisstoryLookAndFeel::drawButtonBackground (juce::Graphics& g,
     if (button.getComponentID() == "spectrogramModeToggle")
     {
         auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
-        const float r = 6.0f;
-        const bool spectrogramOn = button.getToggleState();
-        const auto leftHalf = bounds.removeFromLeft (bounds.getWidth() * 0.5f);
-        const auto rightHalf = bounds;
+        juce::Colour bg = highlighted ? buttonBgHover : buttonBg;
+        if (down) bg = bg.brighter (0.08f);
 
-        auto activeCol = accent;
-        if (highlighted) activeCol = activeCol.brighter (0.1f);
-        if (down) activeCol = activeCol.brighter (0.1f);
-
-        g.setColour (buttonBg);
-        g.fillRoundedRectangle (leftHalf, r);
-        g.fillRoundedRectangle (rightHalf, r);
-
-        g.setColour (spectrogramOn ? buttonBg : activeCol);
-        g.fillRoundedRectangle (leftHalf.reduced (1.0f), r - 1.0f);
-        g.setColour (spectrogramOn ? activeCol : buttonBg);
-        g.fillRoundedRectangle (rightHalf.reduced (1.0f), r - 1.0f);
-
+        g.setColour (bg);
+        g.fillRoundedRectangle (bounds, 5.0f);
         g.setColour (gridLine);
-        g.drawRoundedRectangle (button.getLocalBounds().toFloat().reduced (1.0f), r, 1.0f);
-        g.drawLine (button.getWidth() * 0.5f, 4.0f, button.getWidth() * 0.5f,
-                    (float) button.getHeight() - 4.0f, 1.0f);
+        g.drawRoundedRectangle (bounds, 5.0f, 1.0f);
         return;
     }
 
@@ -153,13 +138,17 @@ void HisstoryLookAndFeel::drawButtonText (juce::Graphics& g,
         auto leftHalf = bounds.removeFromLeft (bounds.getWidth() * 0.5f);
         auto rightHalf = bounds;
 
-        g.setColour (spectrogramOn ? textNormal : textBright);
+        g.setColour (spectrogramOn ? textNormal : accentBright);
         g.setFont (spectrogramOn ? normalFont : boldFont);
         g.drawText ("Analyzer", leftHalf, juce::Justification::centred, true);
 
-        g.setColour (spectrogramOn ? textBright : textNormal);
+        g.setColour (spectrogramOn ? accentBright : textNormal);
         g.setFont (spectrogramOn ? boldFont : normalFont);
         g.drawText ("Spectrogram", rightHalf, juce::Justification::centred, true);
+
+        g.setColour (gridLine);
+        g.drawLine (button.getWidth() * 0.5f, 5.0f, button.getWidth() * 0.5f,
+                    (float) button.getHeight() - 5.0f, 1.0f);
         return;
     }
 
@@ -195,15 +184,15 @@ void HisstoryLookAndFeel::drawButtonText (juce::Graphics& g,
         g.setColour (textBright);
         if (showExpandGlyph)
         {
-            // Expand icon: two arrows pointing outwards.
-            drawArrow ({ c.x - 2.0f, c.y }, { c.x - s - 4.0f, c.y });
-            drawArrow ({ c.x + 2.0f, c.y }, { c.x + s + 4.0f, c.y });
+            // Expand icon: two diagonal arrows pointing outwards.
+            drawArrow ({ c.x - 1.0f, c.y + 1.0f }, { c.x - s - 4.0f, c.y + s + 4.0f });
+            drawArrow ({ c.x + 1.0f, c.y - 1.0f }, { c.x + s + 4.0f, c.y - s - 4.0f });
         }
         else
         {
-            // Collapse icon: two arrows pointing inwards.
-            drawArrow ({ c.x - s - 4.0f, c.y }, { c.x - 2.0f, c.y });
-            drawArrow ({ c.x + s + 4.0f, c.y }, { c.x + 2.0f, c.y });
+            // Collapse icon: two diagonal arrows pointing inwards.
+            drawArrow ({ c.x - s - 4.0f, c.y + s + 4.0f }, { c.x - 1.0f, c.y + 1.0f });
+            drawArrow ({ c.x + s + 4.0f, c.y - s - 4.0f }, { c.x + 1.0f, c.y - 1.0f });
         }
         return;
     }
@@ -212,6 +201,23 @@ void HisstoryLookAndFeel::drawButtonText (juce::Graphics& g,
     g.setFont (14.0f);
     g.drawText (button.getButtonText(), button.getLocalBounds(),
                 juce::Justification::centred);
+}
+
+void HisstoryLookAndFeel::drawTooltip (juce::Graphics& g,
+                                       const juce::String& text,
+                                       int width, int height)
+{
+    auto bounds = juce::Rectangle<int> (width, height).toFloat();
+    g.setColour (background.brighter (0.20f));
+    g.fillRoundedRectangle (bounds.reduced (0.5f), 4.0f);
+
+    g.setColour (gridLine.brighter (0.2f));
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 4.0f, 1.0f);
+
+    g.setColour (textBright);
+    g.setFont (compactTooltipMode ? 11.0f : 14.0f);
+    g.drawFittedText (text, juce::Rectangle<int> (width, height).reduced (6, 4),
+                      juce::Justification::centredLeft, 3);
 }
 
 //==============================================================================
@@ -223,7 +229,7 @@ SpectrumDisplay::SpectrumDisplay (HisstoryAudioProcessor& p) : processor (p)
     dispOutput.fill (-100.0f);
 
     for (auto& col : spectrogramBuf)
-        col.fill (minDB);
+        col.fill (spectrogramMinDB);
 
     buildMelFilterbank();
 }
@@ -241,9 +247,9 @@ void SpectrumDisplay::resized()
 
 float SpectrumDisplay::freqToX (float hz) const
 {
-    float logMin = std::log10 (minFreq);
-    float logMax = std::log10 (maxFreq);
-    float logF   = std::log10 (std::max (hz, minFreq));
+    float logMin = std::log10 (analyzerMinFreq);
+    float logMax = std::log10 (analyzerMaxFreq);
+    float logF   = std::log10 (std::max (hz, analyzerMinFreq));
     float t = (logF - logMin) / (logMax - logMin);
     // Apply power > 1.0 to give more space to higher frequencies
     t = std::pow (t, 0.85f);
@@ -252,14 +258,14 @@ float SpectrumDisplay::freqToX (float hz) const
 
 float SpectrumDisplay::dbToY (float db) const
 {
-    float norm = (db - minDB) / (maxDB - minDB);
+    float norm = (db - analyzerMinDB) / (analyzerMaxDB - analyzerMinDB);
     return plotArea.getBottom() - norm * plotArea.getHeight();
 }
 
 float SpectrumDisplay::xToFreq (float x) const
 {
-    float logMin = std::log10 (minFreq);
-    float logMax = std::log10 (maxFreq);
+    float logMin = std::log10 (analyzerMinFreq);
+    float logMax = std::log10 (analyzerMaxFreq);
     float t = (x - plotArea.getX()) / plotArea.getWidth();
     // Inverse of the power mapping
     t = std::pow (std::max (t, 0.0f), 1.0f / 0.85f);
@@ -269,7 +275,7 @@ float SpectrumDisplay::xToFreq (float x) const
 float SpectrumDisplay::yToDb (float y) const
 {
     float norm = (plotArea.getBottom() - y) / plotArea.getHeight();
-    return minDB + norm * (maxDB - minDB);
+    return analyzerMinDB + norm * (analyzerMaxDB - analyzerMinDB);
 }
 
 // ── Spectrum data refresh ───────────────────────────────────────────────────
@@ -355,11 +361,11 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
 {
     g.setFont (13.0f);
 
-    // Frequency lines (starting at 100 Hz, emphasis on higher frequencies)
-    const float freqLines[] = { 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
-    const char* freqLabels[] = { "100", "200", "500", "1k", "2k", "5k", "10k", "20k" };
+    // Frequency lines (analyzer starts at 20 Hz)
+    const float freqLines[] = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
+    const char* freqLabels[] = { "20", "50", "100", "200", "500", "1k", "2k", "5k", "10k", "20k" };
 
-    for (int i = 0; i < 8; ++i)
+    for (int i = 0; i < 10; ++i)
     {
         float x = freqToX (freqLines[i]);
         if (x < plotArea.getX() || x > plotArea.getRight()) continue;
@@ -383,16 +389,16 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
                                          24.0f, 16.0f),
                 juce::Justification::centredLeft);
 
-    // dB lines: from -20 dB down to -100 dB (skip the top-most to avoid overlap with "dB" label)
-    for (float db = maxDB; db >= minDB; db -= 10.0f)
+    // dB lines: from analyzer max down to min (skip top-most to avoid overlap with "dB" label)
+    for (float db = analyzerMaxDB; db >= analyzerMinDB; db -= 10.0f)
     {
         float y = dbToY (db);
         g.setColour (gridLine);
         g.drawHorizontalLine (static_cast<int> (y),
                               plotArea.getX(), plotArea.getRight());
 
-        // Skip the top label (-20 dB) so it doesn't overlap with the "dB" unit label
-        if (db < maxDB - 1.0f)
+        // Skip the top label so it doesn't overlap with the "dB" unit label
+        if (db < analyzerMaxDB - 1.0f)
         {
             g.setColour (gridText);
             g.drawText (juce::String (static_cast<int> (db)),
@@ -404,7 +410,7 @@ void SpectrumDisplay::drawGrid (juce::Graphics& g)
 
     // "dB" label at top-right (with the top dB value shown inline)
     g.setColour (gridText);
-    g.drawText (juce::String (static_cast<int> (maxDB)) + " dB",
+    g.drawText (juce::String (static_cast<int> (analyzerMaxDB)) + " dB",
                 juce::Rectangle<float> (plotArea.getRight() + 4.0f,
                                          plotArea.getY() - 7.0f,
                                          50.0f, 14.0f),
@@ -428,7 +434,7 @@ void SpectrumDisplay::drawSpectrumCurve (
     for (int bin = 1; bin < HisstoryAudioProcessor::numBins; bin += 2)
     {
         float freq = static_cast<float> (bin) * binW;
-        if (freq < minFreq || freq > maxFreq) continue;
+        if (freq < analyzerMinFreq || freq > analyzerMaxFreq) continue;
 
         float x = freqToX (freq);
         float y = dbToY (data[bin]);
@@ -477,7 +483,7 @@ void SpectrumDisplay::drawThresholdCurve (juce::Graphics& g)
         return -50.0f + offsetDB;
     };
 
-    for (float logF = std::log10 (minFreq); logF <= std::log10 (maxFreq); logF += 0.02f)
+    for (float logF = std::log10 (analyzerMinFreq); logF <= std::log10 (analyzerMaxFreq); logF += 0.02f)
     {
         float freq = std::pow (10.0f, logF);
         float db   = getThresholdDB (freq);
@@ -662,7 +668,7 @@ void SpectrumDisplay::setSpectrogramMode (bool enabled)
         spectrogramImage = {};
         spectrogramWritePos = 0;
         for (auto& col : spectrogramBuf)
-            col.fill (minDB);
+            col.fill (spectrogramMinDB);
     }
 
     repaint();
@@ -676,8 +682,8 @@ void SpectrumDisplay::buildMelFilterbank()
     const float sr   = std::max (processor.currentSampleRate.load(), 1.0f);
     const float binW = sr / static_cast<float> (HisstoryAudioProcessor::fftSize);
 
-    const float melMin = hzToMel (minFreq);
-    const float melMax = hzToMel (std::min (maxFreq, sr * 0.5f));
+    const float melMin = hzToMel (spectrogramMinFreq);
+    const float melMax = hzToMel (std::min (spectrogramMaxFreq, sr * 0.5f));
 
     // numMelBins + 2 edge points for triangular filters
     std::vector<float> melEdges (static_cast<size_t> (numMelBins + 2));
@@ -735,9 +741,9 @@ void SpectrumDisplay::updateSpectrogramColumn()
 
         float melDB = (wSum > 1e-20f)
             ? 10.0f * std::log10 (sum / wSum + 1e-20f)
-            : minDB;
+            : spectrogramMinDB;
 
-        col[static_cast<size_t> (m)] = juce::jlimit (minDB, maxDB, melDB);
+        col[static_cast<size_t> (m)] = juce::jlimit (spectrogramMinDB, spectrogramMaxDB, melDB);
     }
 
     spectrogramWritePos = (spectrogramWritePos + 1) % numTimeCols;
@@ -745,7 +751,7 @@ void SpectrumDisplay::updateSpectrogramColumn()
 
 juce::Colour SpectrumDisplay::dbToColour (float db) const
 {
-    float t = juce::jlimit (0.0f, 1.0f, (db - minDB) / (maxDB - minDB));
+    float t = juce::jlimit (0.0f, 1.0f, (db - spectrogramMinDB) / (spectrogramMaxDB - spectrogramMinDB));
 
     // Orange-themed colourmap: black → dark brown → #A34210 → golden orange → white
     if (t < 0.2f)
@@ -777,16 +783,16 @@ juce::Colour SpectrumDisplay::dbToColour (float db) const
 
 float SpectrumDisplay::melToY (float mel) const
 {
-    const float melMin = hzToMel (minFreq);
-    const float melMax = hzToMel (maxFreq);
+    const float melMin = hzToMel (spectrogramMinFreq);
+    const float melMax = hzToMel (spectrogramMaxFreq);
     float t = (mel - melMin) / (melMax - melMin);
     return plotArea.getBottom() - t * plotArea.getHeight();
 }
 
 float SpectrumDisplay::yToMel (float y) const
 {
-    const float melMin = hzToMel (minFreq);
-    const float melMax = hzToMel (maxFreq);
+    const float melMin = hzToMel (spectrogramMinFreq);
+    const float melMax = hzToMel (spectrogramMaxFreq);
     float t = (plotArea.getBottom() - y) / plotArea.getHeight();
     return melMin + t * (melMax - melMin);
 }
@@ -824,8 +830,8 @@ void SpectrumDisplay::drawSpectrogram (juce::Graphics& g)
         for (int py = 0; py < imgH; ++py)
         {
             float mel = yToMel (plotArea.getY() + static_cast<float> (py));
-            float melIdx = (mel - hzToMel (minFreq))
-                         / (hzToMel (maxFreq) - hzToMel (minFreq))
+            float melIdx = (mel - hzToMel (spectrogramMinFreq))
+                         / (hzToMel (spectrogramMaxFreq) - hzToMel (spectrogramMinFreq))
                          * static_cast<float> (numMelBins - 1);
             melIdx = juce::jlimit (0.0f, static_cast<float> (numMelBins - 1), melIdx);
 
@@ -976,9 +982,10 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
         collapseButton.setToggleState (collapsed, juce::dontSendNotification);
         spectrumDisplay.setVisible (! collapsed);
         spectrumDisplay.spectrogramToggle.setVisible (! collapsed);
+        lnf.setCompactTooltipMode (collapsed);
 
         if (collapsed)
-            setSize (250, 410);
+            setSize (228, 320);
         else
             setSize (880, 500);
     };
@@ -991,6 +998,8 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     thresholdSlider.setColour (juce::Slider::trackColourId, sliderTrack);
     thresholdSlider.setColour (juce::Slider::rotarySliderFillColourId, accentBright);
     thresholdSlider.setColour (juce::Slider::thumbColourId, textBright);
+    thresholdSlider.setColour (juce::Slider::textBoxBackgroundColourId, background.brighter (0.03f));
+    thresholdSlider.setColour (juce::Slider::textBoxOutlineColourId, gridLine);
     thresholdSlider.textFromValueFunction = [] (double val)
     {
         return juce::String (std::abs (val), 1);
@@ -1016,6 +1025,8 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     reductionSlider.setColour (juce::Slider::trackColourId, sliderTrack);
     reductionSlider.setColour (juce::Slider::rotarySliderFillColourId, accentBright);
     reductionSlider.setColour (juce::Slider::thumbColourId, textBright);
+    reductionSlider.setColour (juce::Slider::textBoxBackgroundColourId, background.brighter (0.03f));
+    reductionSlider.setColour (juce::Slider::textBoxOutlineColourId, gridLine);
     reductionSlider.setScrollWheelEnabled (true);
     reductionSlider.setMouseDragSensitivity (320);
     addAndMakeVisible (reductionSlider);
@@ -1110,6 +1121,7 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     brandLogoImage = juce::ImageCache::getFromMemory (
         BinaryData::Logo_png, BinaryData::Logo_pngSize);
 
+    lnf.setCompactTooltipMode (collapsed);
     updateBypassVisualState (processor.apvts.getRawParameterValue ("bypass")->load() > 0.5f);
     startTimerHz (30);
 }
@@ -1153,7 +1165,7 @@ void HisstoryAudioProcessorEditor::resized()
     rightPanel.reduce (isCompact ? 6 : 8, isCompact ? 2 : 4);
 
     // Slider columns
-    const int sliderSectionH = isCompact ? 160 : 220;
+    const int sliderSectionH = isCompact ? 142 : 220;
     auto sliderSection = rightPanel.removeFromTop (sliderSectionH);
     auto thrCol = sliderSection.removeFromLeft (sliderSection.getWidth() / 2);
     auto redCol = sliderSection;
@@ -1165,7 +1177,7 @@ void HisstoryAudioProcessorEditor::resized()
     reductionSlider.setBounds (redCol);
 
     // Metrics section
-    rightPanel.removeFromTop (isCompact ? 4 : 6);
+    rightPanel.removeFromTop (isCompact ? 2 : 6);
 
     if (! isCompact)
     {
@@ -1178,7 +1190,7 @@ void HisstoryAudioProcessorEditor::resized()
     // Metric rows
     auto layoutMetricRow = [&] (juce::Label& name, juce::Label& value)
     {
-        auto row = rightPanel.removeFromTop (isCompact ? 20 : 22);
+        auto row = rightPanel.removeFromTop (isCompact ? 18 : 22);
         name.setBounds (row.removeFromLeft (row.getWidth() * 2 / 3).reduced (4, 0));
         value.setBounds (row.reduced (2, 0));
     };
@@ -1204,10 +1216,13 @@ void HisstoryAudioProcessorEditor::resized()
         rightPanel.removeFromTop (8);
         brandLogoBounds = rightPanel.removeFromTop (
             std::min (rightPanel.getHeight(), 100));
+        compactFooterBounds = {};
     }
     else
     {
         brandLogoBounds = {};
+        rightPanel.removeFromTop (2);
+        compactFooterBounds = rightPanel.removeFromTop (24).reduced (0, 2);
     }
 
     // ── Spectrum display (remaining space) ───────────────────────────────────
@@ -1231,7 +1246,7 @@ void HisstoryAudioProcessorEditor::paint (juce::Graphics& g)
     auto rightPanel = getLocalBounds().removeFromRight (panelW);
     rightPanel.removeFromTop (isCompact ? 32 : 36);
     rightPanel.reduce (isCompact ? 6 : 8, isCompact ? 2 : 4);
-    const int sliderSectionH = isCompact ? 160 : 220;
+    const int sliderSectionH = isCompact ? 142 : 220;
     int sepY = rightPanel.getY() + sliderSectionH + 2;
     g.setColour (gridLine);
     g.drawHorizontalLine (sepY, (float)(rightPanel.getX() + 8),
@@ -1266,10 +1281,9 @@ void HisstoryAudioProcessorEditor::paint (juce::Graphics& g)
 
     if (isCompact)
     {
-        auto footer = getLocalBounds().removeFromBottom (20);
         g.setColour (accentBright);
-        g.setFont (juce::Font (12.0f).boldened());
-        g.drawText ("HISSTORY", footer, juce::Justification::centred);
+        g.setFont (juce::Font (16.0f).boldened());
+        g.drawText ("HISSTORY", compactFooterBounds, juce::Justification::centred);
     }
 }
 
