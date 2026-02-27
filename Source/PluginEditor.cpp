@@ -537,11 +537,12 @@ void SpectrumDisplay::drawBandPoints (juce::Graphics& g)
             effectiveDB = -50.0f + offsetDB;
         }
 
+        const float r = 12.0f;
         float x = freqToX (freq);
         float y = dbToY (effectiveDB);
-        y = juce::jlimit (plotArea.getY(), plotArea.getBottom(), y);
-
-        const float r = 12.0f;
+        // Keep control-point circles out of the bottom label lane so
+        // frequency text (notably "200") remains readable.
+        y = juce::jlimit (plotArea.getY() + r, plotArea.getBottom() - r, y);
 
         g.setColour (pointColour);
         g.fillEllipse (x - r, y - r, r * 2.0f, r * 2.0f);
@@ -596,7 +597,7 @@ void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
 
         float px = freqToX (freq);
         float py = dbToY (effectiveDB);
-        py = juce::jlimit (plotArea.getY(), plotArea.getBottom(), py);
+        py = juce::jlimit (plotArea.getY() + 12.0f, plotArea.getBottom() - 12.0f, py);
 
         if (e.position.getDistanceFrom ({ px, py }) < 16.0f)
         {
@@ -895,15 +896,19 @@ void SpectrumDisplay::drawMelGrid (juce::Graphics& g)
         }
     }
 
-    // Top-right: show the topmost frequency and "Hz" together.
-    // Use a slightly wider rect so labels like "200 Hz" don't overlap.
+    // Top-right: draw number and unit in separate cells to avoid collisions
+    // on labels like "200 Hz".
     g.setColour (HisstoryColours::gridText);
     if (topMostIdx >= 0)
     {
-        juce::String topLabel = juce::String (freqLabels[topMostIdx]) + " Hz";
-        g.drawText (topLabel,
+        const float labelY = topMostY - 7.0f;
+        g.drawText (freqLabels[topMostIdx],
                     juce::Rectangle<float> (plotArea.getRight() + 4.0f,
-                                             topMostY - 7.0f, 58.0f, 14.0f),
+                                             labelY, 34.0f, 14.0f),
+                    juce::Justification::centredLeft);
+        g.drawText ("Hz",
+                    juce::Rectangle<float> (plotArea.getRight() + 38.0f,
+                                             labelY, 20.0f, 14.0f),
                     juce::Justification::centredLeft);
     }
     else
@@ -986,7 +991,7 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
         lnf.setCompactTooltipMode (collapsed);
 
         if (collapsed)
-            setSize (228, 252);
+            setSize (228, 242);
         else
             setSize (880, 500);
     };
@@ -1225,7 +1230,7 @@ void HisstoryAudioProcessorEditor::resized()
     else
     {
         brandLogoBounds = {};
-        compactFooterBounds = getLocalBounds().removeFromBottom (18).reduced (0, 1);
+        compactFooterBounds = getLocalBounds().removeFromBottom (16).reduced (0, 1);
     }
 
     // ── Spectrum display (remaining space) ───────────────────────────────────
@@ -1286,7 +1291,7 @@ void HisstoryAudioProcessorEditor::paint (juce::Graphics& g)
     {
         g.setColour (accentBright);
         g.setFont (juce::Font (16.0f).boldened());
-        g.drawText ("HISSTORY", compactFooterBounds, juce::Justification::centred);
+        g.drawText ("HISSTORY", compactFooterBounds.translated (0, -2), juce::Justification::centred);
     }
 }
 
