@@ -471,6 +471,7 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
     const float reductionDB   = pReduction->load();
     const float smoothPct     = pSmoothing->load() / 100.0f;
     const bool  isAdaptive    = pAdaptive->load() > 0.5f;
+    const bool  bypassedForDisplay = pBypass->load() > 0.5f;
 
     // Spectral floor: max attenuation applied per bin.
     // -60 dB preserves a tiny residual, avoiding complete "holes" in the
@@ -694,7 +695,9 @@ void HisstoryAudioProcessor::processSpectrum (float* fftData,
         {
             float outMag = std::sqrt (fftData[2 * bin] * fftData[2 * bin]
                                     + fftData[2 * bin + 1] * fftData[2 * bin + 1]);
-            outputSpectrumDB[bin] = juce::Decibels::gainToDecibels (outMag, -150.0f);
+            outputSpectrumDB[bin] = bypassedForDisplay
+                                  ? inputSpectrumDB[bin]
+                                  : juce::Decibels::gainToDecibels (outMag, -150.0f);
 
             // ── Noise Purity: classify removed energy as noise vs music ──
             if (g < 0.999f)
