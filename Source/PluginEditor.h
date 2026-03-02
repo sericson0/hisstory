@@ -180,11 +180,20 @@ public:
 
     void paint   (juce::Graphics&) override;
     void resized () override;
+    void parentHierarchyChanged() override;
+    void visibilityChanged() override;
 
 private:
     void timerCallback() override;
     void updateMetrics();
     void updateBypassVisualState (bool bypassed);
+    void applyCollapsedLayoutState();
+    void updateMacPeerWindowBehaviour();
+
+    static constexpr int expandedWidth  = 880;
+    static constexpr int expandedHeight = 500;
+    static constexpr int compactWidth   = 228;
+    static constexpr int compactHeight  = 242;
 
     HisstoryAudioProcessor& processor;
     HisstoryLookAndFeel     lnf;
