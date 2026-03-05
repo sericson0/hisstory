@@ -949,7 +949,9 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
       spectrumDisplay (p)
 {
     setLookAndFeel (&lnf);
-    setSize (880, 500);
+    setResizable (true, false);
+    setResizeLimits (compactWidth, compactHeight, expandedWidth, expandedHeight);
+    setSize (expandedWidth, expandedHeight);
 
     addAndMakeVisible (spectrumDisplay);
 
@@ -986,15 +988,7 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
     collapseButton.onClick = [this]
     {
         collapsed = ! collapsed;
-        collapseButton.setToggleState (collapsed, juce::dontSendNotification);
-        spectrumDisplay.setVisible (! collapsed);
-        spectrumDisplay.spectrogramToggle.setVisible (! collapsed);
-        lnf.setCompactTooltipMode (collapsed);
-
-        if (collapsed)
-            setSize (228, 242);
-        else
-            setSize (880, 500);
+        applyCollapsedLayoutState();
     };
     addAndMakeVisible (collapseButton);
 
@@ -1129,6 +1123,8 @@ HisstoryAudioProcessorEditor::HisstoryAudioProcessorEditor (
         BinaryData::Logo_png, BinaryData::Logo_pngSize);
 
     lnf.setCompactTooltipMode (collapsed);
+    applyCollapsedLayoutState();
+    updateMacPeerWindowBehaviour();
     updateBypassVisualState (processor.apvts.getRawParameterValue ("bypass")->load() > 0.5f);
     startTimerHz (30);
 }
@@ -1240,6 +1236,44 @@ void HisstoryAudioProcessorEditor::resized()
         bounds.reduce (8, 2);
         spectrumDisplay.setBounds (bounds);
     }
+}
+
+void HisstoryAudioProcessorEditor::parentHierarchyChanged()
+{
+    juce::AudioProcessorEditor::parentHierarchyChanged();
+    updateMacPeerWindowBehaviour();
+}
+
+void HisstoryAudioProcessorEditor::visibilityChanged()
+{
+    juce::AudioProcessorEditor::visibilityChanged();
+    updateMacPeerWindowBehaviour();
+}
+
+void HisstoryAudioProcessorEditor::applyCollapsedLayoutState()
+{
+    collapseButton.setToggleState (collapsed, juce::dontSendNotification);
+    spectrumDisplay.setVisible (! collapsed);
+    spectrumDisplay.spectrogramToggle.setVisible (! collapsed);
+    lnf.setCompactTooltipMode (collapsed);
+
+    const int targetW = collapsed ? compactWidth : expandedWidth;
+    const int targetH = collapsed ? compactHeight : expandedHeight;
+    if (getWidth() != targetW || getHeight() != targetH)
+        setSize (targetW, targetH);
+}
+
+void HisstoryAudioProcessorEditor::updateMacPeerWindowBehaviour()
+{
+#if JUCE_MAC
+    if (auto* peer = getPeer())
+    {
+        peer->setAlwaysOnTop (true);
+
+        if (isShowing())
+            peer->toFront (false);
+    }
+#endif
 }
 
 //==============================================================================
